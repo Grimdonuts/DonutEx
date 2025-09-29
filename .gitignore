@@ -1,0 +1,9 @@
+
+build/*
+.vscode/
+
+AppDir
+tinyfiledialogs-current
+
+imgui.ini
+build-win/*

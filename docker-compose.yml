@@ -1,0 +1,30 @@
+services:
+  linux:
+    build:
+      context: .
+      dockerfile: Dockerfile.linux
+    user: "${UUID}:${GGID}" # add these to your bashrc export UUID=$(id -u) export GGID=$(id -g)
+    working_dir: /src
+    volumes:
+      - ./build:/src/build
+    command: >
+      bash -c "
+        rm -rf build/* &&
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -S . &&
+        cp -a plugins build/ &&
+        cp -a icons build/ &&
+        cmake --build build -j$$(nproc)"
+  windows:
+    build:
+      context: .
+      dockerfile: Dockerfile.windows
+    working_dir: /src
+    volumes:
+      - ./build-win:/src/build
+    command: >
+      bash -c "
+        rm -rf build/* &&
+        cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=/src/mingw-toolchain.cmake -DCMAKE_BUILD_TYPE=Release &&
+        cp -a plugins build/ &&
+        cp -a icons build/ &&
+        cmake --build build -j$$(nproc)"

@@ -1,0 +1,59 @@
+FROM debian:12-slim
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    git \
+    wget \
+    unzip \
+    python3 \
+    mingw-w64 \
+    gcc-mingw-w64-x86-64 \
+    g++-mingw-w64-x86-64 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY mingw-toolchain.cmake /src/mingw-toolchain.cmake
+
+RUN [ ! -d imgui ] && git clone https://github.com/ocornut/imgui.git || true && \
+    [ ! -d nativefiledialog-extended ] && git clone https://github.com/btzy/nativefiledialog-extended.git || true && \
+    [ ! -d gl3w ] && git clone https://github.com/skaslev/gl3w.git || true && \
+    [ ! -d glfw ] && git clone https://github.com/glfw/glfw.git || true && \
+    [ ! -d lua ] && git clone https://github.com/lua/lua.git || true && \
+    [ ! -d nanosvg ] && git clone https://github.com/memononen/nanosvg.git || true
+
+RUN cd imgui && git checkout docking
+RUN cd gl3w && python3 gl3w_gen.py
+
+RUN if [ ! -d tinyfiledialogs-current ]; then \
+      wget -O tinyfiledialogs.zip https://sourceforge.net/projects/tinyfiledialogs/files/latest/download && \
+      unzip tinyfiledialogs.zip -d tinyfiledialogs-current && \
+      rm tinyfiledialogs.zip; \
+    fi
+
+RUN cd glfw && \
+    cmake -B build \
+          -DCMAKE_TOOLCHAIN_FILE=/src/mingw-toolchain.cmake \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build -j$(nproc)
+
+# Build Lua once as static lib with MinGW cross-compiler
+RUN cd lua && \
+    x86_64-w64-mingw32-gcc -O2 -c $(ls *.c | grep -v -E 'onelua.c|lua.c') && \
+    x86_64-w64-mingw32-ar rcs liblua.a *.o && \
+    rm -f *.o
+
+
+COPY . .
+
+COPY CMakeLists.windows.txt /src/CMakeLists.txt
+
+# RUN rm -rf build && \
+#     cmake -B build -S /src \
+#           -DCMAKE_TOOLCHAIN_FILE=/src/mingw-toolchain.cmake \
+#           -DCMAKE_BUILD_TYPE=Release && \
+#     cmake --build build -j$(nproc)
+

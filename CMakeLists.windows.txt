@@ -1,0 +1,77 @@
+cmake_minimum_required(VERSION 3.10)
+project(DonutEx-Windows)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Os")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -s")
+add_definitions(-D_WIN32)
+
+set(IMGUI_SOURCES
+    imgui/imgui.cpp
+    imgui/imgui_draw.cpp
+    imgui/imgui_tables.cpp
+    imgui/imgui_widgets.cpp
+    imgui/backends/imgui_impl_glfw.cpp
+    imgui/backends/imgui_impl_opengl3.cpp
+    imgui/misc/cpp/imgui_stdlib.cpp
+)
+
+set(GL3W_SOURCES
+    gl3w/src/gl3w.c
+)
+
+set(MAIN_SOURCES
+    main.cpp
+    TextEditor.cpp
+    LuaBindings.cpp
+)
+
+add_subdirectory(nativefiledialog-extended)
+
+
+add_executable(DonutEx WIN32
+    ${MAIN_SOURCES}
+    ${IMGUI_SOURCES}
+    ${GL3W_SOURCES}
+)
+
+
+target_include_directories(DonutEx PRIVATE
+    lua
+    imgui
+    imgui/backends
+    gl3w/include
+    ${GLFW3_INCLUDE_DIRS}
+    nanosvg/src
+    nativefiledialog-extended/src/include
+)
+
+set(GLFW3_STATIC_LIBRARIES "${CMAKE_SOURCE_DIR}/glfw/build/src/libglfw3.a")
+include_directories(${CMAKE_SOURCE_DIR}/glfw/include)
+
+target_link_libraries(DonutEx
+    ${GLFW3_STATIC_LIBRARIES}
+    ${CMAKE_SOURCE_DIR}/lua/liblua.a
+    -static
+    opengl32
+    gdi32
+    user32
+    comdlg32
+    nfd
+)
+
+
+install(TARGETS DonutEx
+    RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY plugins/
+    DESTINATION plugins
+    FILES_MATCHING PATTERN "*.lua"
+)
+
+install(DIRECTORY icons/
+    DESTINATION icons
+    FILES_MATCHING PATTERN "*.svg"
+)
