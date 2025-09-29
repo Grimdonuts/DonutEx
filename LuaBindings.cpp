@@ -167,6 +167,26 @@ void LuaBindings::registerBridges()
         return 0; }, 1);
     lua_setglobal(L_, "print");
 
+    // print but with an icon
+    push_editor();
+    lua_pushcclosure(L_, [](lua_State *L) -> int
+                     {
+    auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
+    const char* text = luaL_checkstring(L, 1);
+    const char* iconKey = luaL_optstring(L, 2, nullptr);
+    ImTextureID icon = (ImTextureID)0;
+
+    if (iconKey) {
+        auto iconTex = ed->icons.find(iconKey);
+        if (iconTex != ed->icons.end()) {
+            icon = iconTex->second;
+        }
+    }
+
+    ed->addOutput(icon, text);
+    return 0; }, 1);
+    lua_setglobal(L_, "print_with_icon");
+
     // editor_replace_current_word(full_text)
     push_editor();
     lua_pushcclosure(L_, [](lua_State *L) -> int
@@ -302,7 +322,6 @@ void LuaBindings::registerBridges()
                      1);
     lua_setglobal(L_, "editor_get_line_height");
 
-    
     // ImGui hooks
     lua_newtable(L_);
 

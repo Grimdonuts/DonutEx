@@ -8,9 +8,9 @@ function show_font_menu()
         local filename = path:match("([^/\\]+)$")
         if font_button(path, 18, filename) then
             if editor_load_font(path, 18) then
-                print("✅ Switched to " .. filename)
+                print_with_icon("Switched to " .. filename, "checkmark")
             else
-                print("❌ Failed to load " .. filename)
+                print_with_icon("Failed to load " .. filename, "error")
             end
         end
     end
