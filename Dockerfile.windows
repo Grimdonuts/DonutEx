@@ -38,14 +38,43 @@ RUN cd glfw && \
           -DCMAKE_TOOLCHAIN_FILE=/src/mingw-toolchain.cmake \
           -DBUILD_SHARED_LIBS=OFF \
           -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build -j$(nproc)
+    cmake --build build -j$(nproc) && \
+    cmake --install build --prefix /usr/local/x86_64-w64-mingw32
 
-# Build Lua once as static lib with MinGW cross-compiler
 RUN cd lua && \
     x86_64-w64-mingw32-gcc -O2 -c $(ls *.c | grep -v -E 'onelua.c|lua.c') && \
     x86_64-w64-mingw32-ar rcs liblua.a *.o && \
     rm -f *.o
 
+RUN cd nativefiledialog-extended && \
+    cmake -B build \
+          -DCMAKE_TOOLCHAIN_FILE=/src/mingw-toolchain.cmake \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build --prefix /usr/local/x86_64-w64-mingw32
+
+RUN cd gl3w && \
+    python3 gl3w_gen.py && \
+    x86_64-w64-mingw32-gcc -c src/gl3w.c -Iinclude && \
+    x86_64-w64-mingw32-ar rcs libgl3w.a gl3w.o && \
+    mv libgl3w.a /usr/local/x86_64-w64-mingw32/lib && \
+    cp -r include /usr/local/x86_64-w64-mingw32/include/gl3w
+
+RUN cd imgui && \
+    x86_64-w64-mingw32-g++ -I. -Ibackends -I/usr/local/x86_64-w64-mingw32/include -c \
+        imgui.cpp \
+        imgui_draw.cpp \
+        imgui_tables.cpp \
+        imgui_widgets.cpp \
+        backends/imgui_impl_glfw.cpp \
+        backends/imgui_impl_opengl3.cpp \
+        misc/cpp/imgui_stdlib.cpp && \
+    x86_64-w64-mingw32-ar rcs libimgui.a *.o && \
+    mv libimgui.a /usr/local/x86_64-w64-mingw32/lib && \
+    mkdir -p /usr/local/x86_64-w64-mingw32/include/imgui && \
+    cp -r *.h backends misc /usr/local/x86_64-w64-mingw32/include/imgui && \
+    rm -f *.o
 
 COPY . .
 
