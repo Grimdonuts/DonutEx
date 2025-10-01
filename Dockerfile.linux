@@ -45,7 +45,36 @@ RUN if [ ! -d tinyfiledialogs-current ]; then \
 
 RUN cd glfw && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build -j$(nproc)
+    cmake --build build -j$(nproc) && \
+    cmake --install build --prefix /usr/local
+
+RUN cd imgui && \
+    g++ -I. -Ibackends -c \
+        imgui.cpp \
+        imgui_draw.cpp \
+        imgui_tables.cpp \
+        imgui_widgets.cpp \
+        backends/imgui_impl_glfw.cpp \
+        backends/imgui_impl_opengl3.cpp \
+        misc/cpp/imgui_stdlib.cpp && \
+    ar rcs libimgui.a *.o && \
+    mv libimgui.a /usr/local/lib && \
+    mkdir -p /usr/local/include/imgui && \
+    cp -r *.h backends misc /usr/local/include/imgui && \
+    rm -f *.o
+
+RUN cd gl3w && \
+    python3 gl3w_gen.py && \
+    gcc -c src/gl3w.c -Iinclude && \
+    ar rcs libgl3w.a gl3w.o && \
+    mv libgl3w.a /usr/local/lib && \
+    cp -r include /usr/local/include/gl3w && \
+    rm -f gl3w.o
+
+RUN cd nativefiledialog-extended && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build --prefix /usr/local
 
 RUN cd lua && make a
 

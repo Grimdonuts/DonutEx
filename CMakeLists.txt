@@ -1,23 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
 project(DonutEx)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
-
-set(IMGUI_SOURCES
-    imgui/imgui.cpp
-    imgui/imgui_draw.cpp
-    imgui/imgui_tables.cpp
-    imgui/imgui_widgets.cpp
-    imgui/backends/imgui_impl_glfw.cpp
-    imgui/backends/imgui_impl_opengl3.cpp
-    imgui/misc/cpp/imgui_stdlib.cpp
-)
-
-set(GL3W_SOURCES
-    gl3w/src/gl3w.c
-)
 
 set(MAIN_SOURCES
     main.cpp
@@ -25,37 +12,44 @@ set(MAIN_SOURCES
     LuaBindings.cpp
 )
 
-add_subdirectory(nativefiledialog-extended)
-
-add_executable(DonutEx
-    ${MAIN_SOURCES}
-    ${IMGUI_SOURCES}
-    ${GL3W_SOURCES}
-)
-
-target_include_directories(DonutEx PRIVATE
+include_directories(
+    /usr/local/include
+    /usr/local/include/imgui
+    /usr/local/include/imgui/backends
+    /usr/local/include/gl3w
     lua
-    imgui
-    imgui/backends
-    gl3w/include
-    ${GLFW3_INCLUDE_DIRS}
-    nativefiledialog-extended/src/include
     nanosvg/src
 )
 
-set(GLFW3_STATIC_LIBRARIES "${CMAKE_SOURCE_DIR}/glfw/build/src/libglfw3.a")
-include_directories(${CMAKE_SOURCE_DIR}/glfw/include)
+find_library(GLFW3 glfw3 PATHS /usr/local/lib)
+find_library(IMGUI imgui PATHS /usr/local/lib)
+find_library(GL3W gl3w PATHS /usr/local/lib)
+find_library(NFD nfd PATHS /usr/local/lib)
+
+add_executable(DonutEx
+    ${MAIN_SOURCES}
+)
 
 find_package(X11 REQUIRED)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+
+include_directories(${GTK3_INCLUDE_DIRS})
+link_directories(${GTK3_LIBRARY_DIRS})
+add_definitions(${GTK3_CFLAGS_OTHER})
+
 target_link_libraries(DonutEx
-    ${GLFW3_STATIC_LIBRARIES}
+    ${GLFW3}
+    ${IMGUI}
+    ${GL3W}
+    ${NFD}
+    ${GTK3_LIBRARIES}
     ${CMAKE_SOURCE_DIR}/lua/liblua.a
     GL
     ${CMAKE_DL_LIBS}
     X11::X11
-    nfd
 )
-
 
 install(TARGETS DonutEx
     RUNTIME DESTINATION bin
