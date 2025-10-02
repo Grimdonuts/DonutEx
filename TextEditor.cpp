@@ -178,50 +178,15 @@ bool TextEditor::render()
     ImGui::SetNextWindowPos(editorPos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(editorSize, ImGuiCond_Always);
 
-    if (ImGui::Begin("Editor", nullptr,
-                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                         ImGuiWindowFlags_NoBringToFrontOnFocus))
-    {
-        std::string title = filename.empty() ? "Untitled" : filename;
-        if (modified)
-            title += "*";
+if (ImGui::Begin("Editor", nullptr,
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus))
+{
 
-        ImGuiStyle &style = ImGui::GetStyle();
-        float frameHeight = ImGui::GetFrameHeight();
+}
+ImGui::End();
 
-        ImGui::BeginGroup();
-        ImGui::Image(icons["document"], ImVec2(frameHeight, frameHeight));
-        ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(title.c_str());
-
-        ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
-        ImGui::AlignTextToFramePadding();
-        ImGui::Text("| Line: %d, Col: %d | Chars: %zu",
-                    cursorLine + 1, cursorColumn + 1, content.length());
-        ImGui::EndGroup();
-        ImGui::Separator();
-
-        if (focusEditor)
-        {
-            ImGui::SetKeyboardFocusHere();
-            focusEditor = false;
-        }
-
-        bool contentChanged = ImGui::InputTextMultiline("##editor", &content,
-                                                        ImVec2(-1, -1), inputFlags,
-                                                        textInputCallback, this);
-
-        editorInputId = ImGui::GetItemID();
-        editorRectMin = ImGui::GetItemRectMin();
-        lineHeight = ImGui::GetTextLineHeight();
-        charWidth = ImGui::CalcTextSize("A").x;
-
-        if (contentChanged && !modified)
-            modified = true;
-    }
-    ImGui::End();
 
     // Output Panel
     if (showOutput)
@@ -359,29 +324,6 @@ void TextEditor::saveFile()
     }
 }
 
-int TextEditor::textInputCallback(ImGuiInputTextCallbackData *data)
-{
-    TextEditor *editor = static_cast<TextEditor *>(data->UserData);
-    int pos = data->CursorPos;
-    int line = 0, col = 0, i = 0;
-    while (i < pos && i < (int)editor->content.size())
-    {
-        if (editor->content[i] == '\n')
-        {
-            line++;
-            col = 0;
-        }
-        else
-        {
-            col++;
-        }
-        ++i;
-    }
-    editor->cursorLine = line;
-    editor->cursorColumn = col;
-    return 0;
-}
-
 // basic commands, maybe more later...
 void TextEditor::registerCommands()
 {
@@ -430,85 +372,6 @@ void TextEditor::refreshFileList()
     }
 }
 
-void TextEditor::insertText(const std::string &text)
-{
-    content += text;
-    modified = true;
-}
-
-std::string TextEditor::getCurrentLine()
-{
-    std::istringstream ss(content);
-    std::string line;
-    int currentLine = 0;
-    while (std::getline(ss, line) && currentLine <= cursorLine)
-    {
-        if (currentLine == cursorLine)
-            return line;
-        currentLine++;
-    }
-    return "";
-}
-
-std::string TextEditor::getCurrentWord()
-{
-    std::istringstream ss(content);
-    std::string line;
-    int currentLine = 0;
-    while (std::getline(ss, line) && currentLine <= cursorLine)
-    {
-        if (currentLine == cursorLine)
-        {
-            int col = std::min<int>(cursorColumn, (int)line.size());
-            int start = col;
-            while (start > 0 && (std::isalnum((unsigned char)line[start - 1]) || line[start - 1] == '_'))
-                --start;
-            int end = col;
-            while (end < (int)line.size() && (std::isalnum((unsigned char)line[end]) || line[end] == '_'))
-                ++end;
-            return line.substr(start, end - start);
-        }
-        currentLine++;
-    }
-    return "";
-}
-
-std::pair<int, int> TextEditor::getCursorPosition()
-{
-    return {cursorLine, cursorColumn};
-}
-
-// mainly used in positioning our autocomplete popup
-ImVec2 TextEditor::getCursorScreenPos()
-{
-    ImGuiInputTextState *state = ImGui::GetInputTextState(editorInputId);
-    if (!state)
-        return lastCaretScreenPos;
-
-    const ImGuiStyle &style = ImGui::GetStyle();
-
-    ImVec2 inner_origin(
-        editorRectMin.x + style.FramePadding.x,
-        editorRectMin.y + style.FramePadding.y);
-
-    std::istringstream ss(content);
-    std::string line;
-    int currentLine = 0;
-    while (std::getline(ss, line) && currentLine < cursorLine)
-        currentLine++;
-
-    int col = std::min<int>(cursorColumn, (int)line.size());
-    std::string uptoCursor = line.substr(0, col);
-
-    float caret_x = ImGui::CalcTextSize(uptoCursor.c_str()).x;
-    float caret_y = (float)cursorLine * lineHeight - state->Scroll.y;
-    ImVec2 caret_screen(inner_origin.x + caret_x,
-                        inner_origin.y + caret_y);
-
-    lastCaretScreenPos = caret_screen;
-    return caret_screen;
-}
-
 // console logging in the output window
 void TextEditor::addOutput(ImTextureID icon, const std::string &text)
 {
@@ -536,36 +399,36 @@ void TextEditor::renderSettings()
     ImGui::End();
 }
 
-void TextEditor::replaceCurrentWordWith(const std::string &full)
-{
-    std::istringstream ss(content);
-    std::string line;
-    int currentLineIdx = 0;
-    size_t offset = 0;
-    while (std::getline(ss, line))
-    {
-        if (currentLineIdx == cursorLine)
-            break;
-        offset += line.size() + 1;
-        currentLineIdx++;
-    }
-    if (currentLineIdx != cursorLine)
-        return;
+// void TextEditor::replaceCurrentWordWith(const std::string &full)
+// {
+//     std::istringstream ss(content);
+//     std::string line;
+//     int currentLineIdx = 0;
+//     size_t offset = 0;
+//     while (std::getline(ss, line))
+//     {
+//         if (currentLineIdx == cursorLine)
+//             break;
+//         offset += line.size() + 1;
+//         currentLineIdx++;
+//     }
+//     if (currentLineIdx != cursorLine)
+//         return;
 
-    int col = std::min<int>(cursorColumn, (int)line.size());
-    int start = col;
-    while (start > 0 && (std::isalnum((unsigned char)line[start - 1]) || line[start - 1] == '_'))
-        --start;
-    int end = col;
-    while (end < (int)line.size() && (std::isalnum((unsigned char)line[end]) || line[end] == '_'))
-        ++end;
+//     int col = std::min<int>(cursorColumn, (int)line.size());
+//     int start = col;
+//     while (start > 0 && (std::isalnum((unsigned char)line[start - 1]) || line[start - 1] == '_'))
+//         --start;
+//     int end = col;
+//     while (end < (int)line.size() && (std::isalnum((unsigned char)line[end]) || line[end] == '_'))
+//         ++end;
 
-    size_t absStart = offset + start;
-    size_t absEnd = offset + end;
-    content.replace(absStart, absEnd - absStart, full);
-    cursorColumn = start + (int)full.size();
-    modified = true;
-}
+//     size_t absStart = offset + start;
+//     size_t absEnd = offset + end;
+//     content.replace(absStart, absEnd - absStart, full);
+//     cursorColumn = start + (int)full.size();
+//     modified = true;
+// }
 
 void TextEditor::showOpenDialog()
 {
