@@ -44,14 +44,16 @@ public:
     float charWidth;
     std::unordered_map<std::string, ImTextureID> icons;
     std::vector<OutputLine> outputLines;
+    void renderEditor();
 private:
     std::string content;
+    int cursorIndex = 0;   // NEW: position in content string
+    bool focusEditor = false;
     std::string commandInput;
     std::vector<std::string> fileList;
     bool modified{};
     bool showFileExplorer{true};
     bool showOutput{true};
-    bool focusEditor{};
     bool showSettings{false};
     int cursorLine{};
     int cursorColumn{};

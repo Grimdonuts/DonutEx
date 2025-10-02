@@ -184,6 +184,7 @@ if (ImGui::Begin("Editor", nullptr,
                      ImGuiWindowFlags_NoBringToFrontOnFocus))
 {
 
+    renderEditor();
 }
 ImGui::End();
 
@@ -559,4 +560,89 @@ bool TextEditor::IconTextButton(const char *id, ImTextureID icon, const char *la
                     pos.y + (size.y - text_size.y) * 0.5f);
     ImGui::GetWindowDrawList()->AddText(textPos, IM_COL32_WHITE, label);
     return pressed;
+}
+
+
+void TextEditor::renderEditor()
+{
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+
+    // Draw background
+    ImVec2 winSize = ImGui::GetContentRegionAvail();
+    draw_list->AddRectFilled(pos, ImVec2(pos.x + winSize.x, pos.y + winSize.y),
+                             ImGui::GetColorU32(ImGuiCol_FrameBg));
+
+    // Draw text line by line
+    std::istringstream ss(content);
+    std::string line;
+    int lineNum = 0;
+    float y = pos.y;
+    while (std::getline(ss, line))
+    {
+        draw_list->AddText(ImVec2(pos.x + 4, y), ImGui::GetColorU32(ImGuiCol_Text), line.c_str());
+        y += lineHeight;
+        lineNum++;
+    }
+
+    // Handle input
+    ImGuiIO& io = ImGui::GetIO();
+ImGui::InvisibleButton("editor_area", winSize, ImGuiButtonFlags_MouseButtonLeft);
+bool isFocused = ImGui::IsItemFocused(); // <-- use focused, not active
+
+if (ImGui::IsItemClicked()) {
+    ImGui::SetKeyboardFocusHere(); // give keyboard focus when clicked
+    isFocused = true;
+}
+
+if (isFocused)
+{
+    for (unsigned int c : io.InputQueueCharacters)
+    {
+        if (c == '\n' || c == '\r') {
+            content.insert(content.begin() + cursorIndex, '\n');
+            cursorIndex++;
+        } else if (c >= 32) {
+            content.insert(content.begin() + cursorIndex, (char)c);
+            cursorIndex++;
+        }
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && cursorIndex > 0) {
+        content.erase(content.begin() + cursorIndex - 1);
+        cursorIndex--;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && cursorIndex < (int)content.size()) {
+        content.erase(content.begin() + cursorIndex);
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && cursorIndex > 0) cursorIndex--;
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && cursorIndex < (int)content.size()) cursorIndex++;
+}
+
+
+    // Draw cursor (blink)
+    if (isFocused && (int)(ImGui::GetTime() * 2) % 2 == 0) {
+        // Compute cursor position
+        int lineCount = 0;
+        int col = 0;
+        int idx = 0;
+        std::istringstream ss2(content);
+        std::string l;
+        float cy = pos.y;
+        while (std::getline(ss2, l)) {
+            if (cursorIndex <= idx + (int)l.size()) {
+                col = cursorIndex - idx;
+                break;
+            }
+            idx += (int)l.size() + 1; // +1 for newline
+            cy += lineHeight;
+            lineCount++;
+        }
+        ImVec2 cursorPos(pos.x + 4 + ImGui::CalcTextSize(l.substr(0, col).c_str()).x, cy);
+        draw_list->AddLine(cursorPos, ImVec2(cursorPos.x, cursorPos.y + lineHeight - 2),
+                           ImGui::GetColorU32(ImGuiCol_Text));
+    }
 }
