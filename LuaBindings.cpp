@@ -109,45 +109,45 @@ void LuaBindings::registerBridges()
     // TextEditor stuff
 
     // editor_insert_text(text)
-    push_editor();
-    lua_pushcclosure(L_, [](lua_State *L) -> int
-                     {
-        auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
-        const char* text = luaL_checkstring(L, 1);
-        ed->insertText(text);
-        return 0; }, 1);
-    lua_setglobal(L_, "editor_insert_text");
+    // push_editor();
+    // lua_pushcclosure(L_, [](lua_State *L) -> int
+    //                  {
+    //     auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
+    //     const char* text = luaL_checkstring(L, 1);
+    //     ed->insertText(text);
+    //     return 0; }, 1);
+    // lua_setglobal(L_, "editor_insert_text");
 
     // editor_get_current_line()
-    push_editor();
-    lua_pushcclosure(L_, [](lua_State *L) -> int
-                     {
-        auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
-        std::string line = ed->getCurrentLine();
-        lua_pushlstring(L, line.c_str(), line.size());
-        return 1; }, 1);
-    lua_setglobal(L_, "editor_get_current_line");
+    // push_editor();
+    // lua_pushcclosure(L_, [](lua_State *L) -> int
+    //                  {
+    //     auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
+    //     std::string line = ed->getCurrentLine();
+    //     lua_pushlstring(L, line.c_str(), line.size());
+    //     return 1; }, 1);
+    // lua_setglobal(L_, "editor_get_current_line");
 
     // editor_get_current_word()
-    push_editor();
-    lua_pushcclosure(L_, [](lua_State *L) -> int
-                     {
-        auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
-        std::string word = ed->getCurrentWord();
-        lua_pushlstring(L, word.c_str(), word.size());
-        return 1; }, 1);
-    lua_setglobal(L_, "editor_get_current_word");
+    // push_editor();
+    // lua_pushcclosure(L_, [](lua_State *L) -> int
+    //                  {
+    //     auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
+    //     std::string word = ed->getCurrentWord();
+    //     lua_pushlstring(L, word.c_str(), word.size());
+    //     return 1; }, 1);
+    // lua_setglobal(L_, "editor_get_current_word");
 
     // editor_get_cursor_position() -> line, col
-    push_editor();
-    lua_pushcclosure(L_, [](lua_State *L) -> int
-                     {
-        auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
-        auto [line, col] = ed->getCursorPosition();
-        lua_pushinteger(L, line);
-        lua_pushinteger(L, col);
-        return 2; }, 1);
-    lua_setglobal(L_, "editor_get_cursor_position");
+    // push_editor();
+    // lua_pushcclosure(L_, [](lua_State *L) -> int
+    //                  {
+    //     auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
+    //     auto [line, col] = ed->getCursorPosition();
+    //     lua_pushinteger(L, line);
+    //     lua_pushinteger(L, col);
+    //     return 2; }, 1);
+    // lua_setglobal(L_, "editor_get_cursor_position");
 
     // print to output window
     push_editor();
@@ -193,7 +193,7 @@ void LuaBindings::registerBridges()
                      {
         auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
         const char* full = luaL_checkstring(L, 1);
-        ed->replaceCurrentWordWith(full);
+       // ed->replaceCurrentWordWith(full);
         return 0; }, 1);
     lua_setglobal(L_, "editor_replace_current_word");
 
@@ -300,16 +300,16 @@ void LuaBindings::registerBridges()
         return 1; }, 1);
     lua_setglobal(L_, "font_button");
 
-    // editor_get_line_height good for the autocomplete
-    push_editor();
-    lua_pushcclosure(L_, [](lua_State *L) -> int
-                     {
-    auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
-    ImVec2 pos = ed->getCursorScreenPos();
-    lua_pushnumber(L, pos.x);
-    lua_pushnumber(L, pos.y);
-    return 2; }, 1);
-    lua_setglobal(L_, "editor_get_cursor_screen_pos");
+    // // editor_get_line_height good for the autocomplete
+    // push_editor();
+    // lua_pushcclosure(L_, [](lua_State *L) -> int
+    //                  {
+    // auto* ed = static_cast<TextEditor*>(lua_touserdata(L, lua_upvalueindex(1)));
+    // ImVec2 pos = ed->getCursorScreenPos();
+    // lua_pushnumber(L, pos.x);
+    // lua_pushnumber(L, pos.y);
+    // return 2; }, 1);
+    // lua_setglobal(L_, "editor_get_cursor_screen_pos");
 
     // editor_get_line_height()
     push_editor();

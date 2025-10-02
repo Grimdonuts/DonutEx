@@ -27,18 +27,18 @@ public:
     ~TextEditor();
     std::string filename;
     std::unordered_map<std::string, ImFont *> fontPreviews;
-    std::string getCurrentLine();
-    std::string getCurrentWord();
-    std::pair<int, int> getCursorPosition();
+   // std::string getCurrentLine();
+  //  std::string getCurrentWord();
+    //std::pair<int, int> getCursorPosition();
     void insertText(const std::string &text);
     void addOutput(ImTextureID icon, const std::string &text);
     void addOutput(const std::string &text); // text only
-    void replaceCurrentWordWith(const std::string &full);
+    // void replaceCurrentWordWith(const std::string &full);
     bool render();
     void renderSettings();
     void handleKeyboard();
     void openFile(const std::string &fname);
-    ImVec2 getCursorScreenPos();
+  //  ImVec2 getCursorScreenPos();
     ImVec2 editorRectMin;
     float lineHeight;
     float charWidth;
