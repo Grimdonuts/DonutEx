@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        editor.handleKeyboard();
+        editor.handleKeyboardShortcuts();
         if (editor.render())
         {
             glfwSetWindowShouldClose(window, GLFW_TRUE);

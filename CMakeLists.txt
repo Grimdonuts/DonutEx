@@ -10,6 +10,7 @@ set(MAIN_SOURCES
     main.cpp
     TextEditor.cpp
     LuaBindings.cpp
+    PieceTable.cpp
 )
 
 include_directories(

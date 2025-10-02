@@ -37,12 +37,6 @@ RUN cd imgui && git checkout docking
 
 RUN cd gl3w && python3 gl3w_gen.py
 
-RUN if [ ! -d tinyfiledialogs-current ]; then \
-      wget -O tinyfiledialogs.zip https://sourceforge.net/projects/tinyfiledialogs/files/latest/download && \
-      unzip tinyfiledialogs.zip -d tinyfiledialogs-current && \
-      rm tinyfiledialogs.zip; \
-    fi
-
 RUN cd glfw && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release && \
     cmake --build build -j$(nproc) && \
