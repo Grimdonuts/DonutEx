@@ -66,34 +66,53 @@ void TextEditor::renderEditor()
         ImVec2 pos = ImGui::GetCursorScreenPos();
         float lineHeight = ImGui::GetTextLineHeightWithSpacing();
 
-        // Draw background
+        // Layout
         ImVec2 winSize = ImGui::GetContentRegionAvail();
+        const float padX = 4.0f;
+        const float padY = 4.0f;
+        const float scrollbarH = 12.0f;
+        const float viewH = winSize.y - scrollbarH;
+        const float viewW = winSize.x;
+
+        // Background
         draw_list->AddRectFilled(pos, ImVec2(pos.x + winSize.x, pos.y + winSize.y),
                                  ImGui::GetColorU32(ImGuiCol_FrameBg));
 
-        // Draw text line by line
-        std::istringstream ss(content.getText());
-        std::string line;
-        int lineNum = 0;
-        float y = pos.y;
-        while (std::getline(ss, line))
-        {
-            draw_list->AddText(ImVec2(pos.x + 4, y), ImGui::GetColorU32(ImGuiCol_Text), line.c_str());
-            y += lineHeight;
-            lineNum++;
-        }
-
-        // Handle input
-        ImGuiIO &io = ImGui::GetIO();
-        ImGui::InvisibleButton("editor_area", winSize, ImGuiButtonFlags_MouseButtonLeft);
-        bool isFocused = ImGui::IsItemFocused(); // <-- use focused, not active
+        // Editor interactive area
+        ImGui::InvisibleButton("editor_area", ImVec2(winSize.x, viewH),
+                               ImGuiButtonFlags_MouseButtonLeft);
+        bool isFocused = ImGui::IsItemFocused();
 
         if (ImGui::IsItemClicked())
         {
-            ImGui::SetKeyboardFocusHere(); // give keyboard focus when clicked
+            ImGui::SetKeyboardFocusHere();
             isFocused = true;
         }
 
+        // ----- Clipping -----
+        ImVec2 clipMin = ImVec2(pos.x, pos.y);
+        ImVec2 clipMax = ImVec2(pos.x + viewW, pos.y + viewH);
+        draw_list->PushClipRect(clipMin, clipMax, true);
+
+        // Draw text with horizontal offset
+        std::istringstream ss(content.getText());
+        std::string line;
+        float y = pos.y + padY;
+
+        maxContentWidth = 0.0f;
+        while (std::getline(ss, line))
+        {
+            float lineWidth = ImGui::CalcTextSize(line.c_str()).x;
+            if (lineWidth > maxContentWidth) maxContentWidth = lineWidth;
+
+            ImVec2 textPos = ImVec2(pos.x + padX - scrollX, y);
+            draw_list->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), line.c_str());
+
+            y += lineHeight;
+        }
+
+        // ----- Input handling -----
+        ImGuiIO &io = ImGui::GetIO();
         if (isFocused)
         {
             for (unsigned int c : io.InputQueueCharacters)
@@ -102,11 +121,13 @@ void TextEditor::renderEditor()
                 {
                     content.insert(cursorIndex, "\n");
                     cursorIndex++;
+                    caretFollow = true;
                 }
                 else if (c >= 32)
                 {
                     content.insert(cursorIndex, std::string(1, (char)c));
                     cursorIndex++;
+                    caretFollow = true;
                 }
             }
 
@@ -114,47 +135,172 @@ void TextEditor::renderEditor()
             {
                 content.erase(cursorIndex - 1, 1);
                 cursorIndex--;
+                caretFollow = true;
             }
 
             if (ImGui::IsKeyPressed(ImGuiKey_Delete) && cursorIndex < (int)content.size())
             {
                 content.erase(cursorIndex, 1);
+                caretFollow = true;
             }
 
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && cursorIndex > 0)
+            {
                 cursorIndex--;
+                caretFollow = true;
+            }
+
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && cursorIndex < (int)content.size())
+            {
                 cursorIndex++;
+                caretFollow = true;
+            }
+
+            // Shift+wheel horizontal scrolling
+            if (io.KeyShift && io.MouseWheel != 0.0f)
+            {
+                scrollX -= io.MouseWheel * 40.0f;
+            }
         }
 
-        // Draw cursor (blink)
-        if (isFocused && (int)(ImGui::GetTime() * 2) % 2 == 0)
+        // ----- Caret position -----
+        int col = 0;
+        std::string caretLine;
         {
-            // Compute cursor position
-            int lineCount = 0;
-            int col = 0;
             int idx = 0;
             std::istringstream ss2(content.getText());
             std::string l;
-            float cy = pos.y;
+            int lineStartIdx = 0;
             while (std::getline(ss2, l))
             {
-                if (cursorIndex <= idx + (int)l.size())
+                int lineLen = (int)l.size();
+                if (cursorIndex <= lineStartIdx + lineLen)
                 {
-                    col = cursorIndex - idx;
+                    caretLine = l;
+                    col = cursorIndex - lineStartIdx;
                     break;
                 }
-                idx += (int)l.size() + 1; // +1 for newline
-                cy += lineHeight;
-                lineCount++;
+                lineStartIdx += lineLen + 1;
             }
-            ImVec2 cursorPos(pos.x + 4 + ImGui::CalcTextSize(l.substr(0, col).c_str()).x, cy);
-            draw_list->AddLine(cursorPos, ImVec2(cursorPos.x, cursorPos.y + lineHeight - 2),
+        }
+
+        float caretXLocal = padX + ImGui::CalcTextSize(caretLine.substr(0, col).c_str()).x;
+        float visibleW = viewW - padX * 2.0f;
+
+        // Auto-scroll only when caretFollow is set
+        if (caretFollow)
+        {
+            if (caretXLocal < scrollX)
+                scrollX = caretXLocal;
+            if (caretXLocal > scrollX + visibleW)
+                scrollX = caretXLocal - visibleW;
+
+            caretFollow = false;
+        }
+
+        // Clamp scroll (FIX: add glyph padding so last char/caret is fully visible)
+        float extraPad = ImGui::CalcTextSize("M").x; // safe glyph width
+        float maxScroll = ImMax(0.0f, (maxContentWidth + extraPad) - visibleW);
+        scrollX = ImClamp(scrollX, 0.0f, maxScroll);
+
+        // Draw caret (blink)
+        if (isFocused && (int)(ImGui::GetTime() * 2) % 2 == 0)
+        {
+            float cy = pos.y + padY;
+            {
+                int idx = 0;
+                std::istringstream ss2(content.getText());
+                std::string l;
+                int consumed = 0;
+                while (std::getline(ss2, l))
+                {
+                    if (cursorIndex <= consumed + (int)l.size())
+                        break;
+                    consumed += (int)l.size() + 1;
+                    cy += lineHeight;
+                }
+            }
+
+            ImVec2 cursorPos(pos.x + caretXLocal - scrollX, cy);
+            draw_list->AddLine(cursorPos,
+                               ImVec2(cursorPos.x, cursorPos.y + lineHeight - 2),
                                ImGui::GetColorU32(ImGuiCol_Text));
         }
+
+        draw_list->PopClipRect();
+
+        // ----- Custom horizontal scrollbar -----
+        ImVec2 barPos = ImVec2(pos.x, pos.y + viewH);
+        ImVec2 barSize = ImVec2(viewW, scrollbarH);
+
+        ImU32 bgCol   = ImGui::GetColorU32(ImGuiCol_FrameBgHovered);
+        ImU32 fillCol = ImGui::GetColorU32(ImGuiCol_ScrollbarGrab);
+        ImU32 fillHot = ImGui::GetColorU32(ImGuiCol_ScrollbarGrabHovered);
+        ImU32 fillAct = ImGui::GetColorU32(ImGuiCol_ScrollbarGrabActive);
+
+        draw_list->AddRectFilled(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y), bgCol);
+
+        float contentW = ImMax(visibleW, maxContentWidth + extraPad); // also add pad here
+        float trackW   = barSize.x;
+        float minThumb = 24.0f;
+
+        float thumbW = (visibleW / contentW) * trackW;
+        thumbW = ImClamp(thumbW, minThumb, trackW);
+
+        float trackRange = trackW - thumbW;
+        float denom = ImMax(1.0f, contentW - visibleW);
+        float thumbX = (denom > 0.0f) ? (scrollX / denom) * trackRange : 0.0f;
+
+        ImVec2 thumbMin = ImVec2(barPos.x + thumbX, barPos.y);
+        ImVec2 thumbMax = ImVec2(barPos.x + thumbX + thumbW, barPos.y + barSize.y);
+
+        // Thumb interaction
+        ImGui::SetCursorScreenPos(thumbMin);
+        ImGui::InvisibleButton("hthumb", ImVec2(thumbW, scrollbarH));
+        bool thumbHovered = ImGui::IsItemHovered();
+
+        if (ImGui::IsItemActivated())
+        {
+            hDragging = true;
+            hDragMouseStart = io.MousePos.x;
+            hDragScrollStart = scrollX;
+        }
+        if (hDragging)
+        {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                float dx = io.MousePos.x - hDragMouseStart;
+                float newThumbX = (hDragScrollStart / denom) * trackRange + dx;
+                newThumbX = ImClamp(newThumbX, 0.0f, trackRange);
+                scrollX = (denom > 0.0f) ? (newThumbX / trackRange) * denom : 0.0f;
+            }
+            else
+            {
+                hDragging = false;
+            }
+        }
+
+        // Track clicks
+        ImGui::SetCursorScreenPos(barPos);
+        ImGui::InvisibleButton("htrack", ImVec2(trackW, scrollbarH));
+        if (ImGui::IsItemClicked())
+        {
+            float mouseX = io.MousePos.x - barPos.x;
+            float page = visibleW * 0.8f;
+            if (mouseX < thumbX)
+                scrollX = ImMax(0.0f, scrollX - page);
+            else if (mouseX > thumbX + thumbW)
+                scrollX = ImMin(maxScroll, scrollX + page);
+        }
+
+        ImU32 thumbCol = hDragging ? fillAct : (thumbHovered ? fillHot : fillCol);
+        draw_list->AddRectFilled(thumbMin, thumbMax, thumbCol, 3.0f);
+
+        scrollX = ImClamp(scrollX, 0.0f, maxScroll);
     }
     ImGui::End();
 }
+
 
 void TextEditor::renderExplorer(ImVec2 workPos, ImVec2 workSize, float explorerWidth)
 {

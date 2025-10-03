@@ -25,7 +25,6 @@ RUN [ ! -d imgui ] && git clone https://github.com/ocornut/imgui.git || true && 
     [ ! -d nanosvg ] && git clone https://github.com/memononen/nanosvg.git || true
 
 RUN cd imgui && git checkout docking
-RUN cd gl3w && python3 gl3w_gen.py
 
 RUN cd glfw && \
     cmake -B build \
