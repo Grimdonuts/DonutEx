@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include "imgui.h"
+#include <algorithm>
 
 extern "C"
 {

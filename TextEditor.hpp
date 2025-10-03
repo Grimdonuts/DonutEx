@@ -75,4 +75,14 @@ private:
     void renderExplorer(ImVec2 workPos, ImVec2 workSize, float explorerWidth);
     void renderOutput(ImVec2 workPos, ImVec2 workSize, float outputHeight, float explorerWidth);
     void renderMenuBar();
+    // TextEditor.hpp  (add to private section)
+// Horizontal scrolling state
+float scrollX = 0.0f;             // current horizontal scroll in pixels
+float maxContentWidth = 0.0f;     // widest line width in pixels (updated each frame)
+bool  hDragging = false;          // dragging the horizontal thumb?
+float hDragMouseStart = 0.0f;     // mouse x at drag start (screen space)
+float hDragScrollStart = 0.0f;    // scrollX at drag start
+
+bool caretFollow = true;
+
 };
