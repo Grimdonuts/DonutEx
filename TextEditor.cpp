@@ -95,93 +95,88 @@ void TextEditor::renderEditor()
         draw_list->PushClipRect(clipMin, clipMax, true);
 
         // Draw text with horizontal offset
-        std::istringstream ss(content.getText());
-        std::string line;
-        float y = pos.y + padY;
+float y = pos.y + padY;
+maxContentWidth = 0.0f;
 
-        maxContentWidth = 0.0f;
-        while (std::getline(ss, line))
-        {
-            float lineWidth = ImGui::CalcTextSize(line.c_str()).x;
-            if (lineWidth > maxContentWidth) maxContentWidth = lineWidth;
+for (const auto& cl : lineCache) {
+    if (cl.width > maxContentWidth) maxContentWidth = cl.width;
+    ImVec2 textPos = ImVec2(pos.x + padX - scrollX, y);
+    draw_list->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), cl.text.c_str());
+    y += lineHeight;
+}
 
-            ImVec2 textPos = ImVec2(pos.x + padX - scrollX, y);
-            draw_list->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), line.c_str());
-
-            y += lineHeight;
-        }
 
         // ----- Input handling -----
         ImGuiIO &io = ImGui::GetIO();
-        if (isFocused)
+if (isFocused)
+{
+    for (unsigned int c : io.InputQueueCharacters)
+    {
+        if (c == '\n' || c == '\r')
         {
-            for (unsigned int c : io.InputQueueCharacters)
-            {
-                if (c == '\n' || c == '\r')
-                {
-                    content.insert(cursorIndex, "\n");
-                    cursorIndex++;
-                    caretFollow = true;
-                }
-                else if (c >= 32)
-                {
-                    content.insert(cursorIndex, std::string(1, (char)c));
-                    cursorIndex++;
-                    caretFollow = true;
-                }
-            }
-
-            if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && cursorIndex > 0)
-            {
-                content.erase(cursorIndex - 1, 1);
-                cursorIndex--;
-                caretFollow = true;
-            }
-
-            if (ImGui::IsKeyPressed(ImGuiKey_Delete) && cursorIndex < (int)content.size())
-            {
-                content.erase(cursorIndex, 1);
-                caretFollow = true;
-            }
-
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && cursorIndex > 0)
-            {
-                cursorIndex--;
-                caretFollow = true;
-            }
-
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && cursorIndex < (int)content.size())
-            {
-                cursorIndex++;
-                caretFollow = true;
-            }
-
-            // Shift+wheel horizontal scrolling
-            if (io.KeyShift && io.MouseWheel != 0.0f)
-            {
-                scrollX -= io.MouseWheel * 40.0f;
-            }
+            content.insert(cursorIndex, "\n");
+            cursorIndex++;
+            caretFollow = true;
+            onTextChanged();
         }
+        else if (c >= 32)
+        {
+            content.insert(cursorIndex, std::string(1, (char)c));
+            cursorIndex++;
+            caretFollow = true;
+            onTextChanged();
+        }
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && cursorIndex > 0)
+    {
+        content.erase(cursorIndex - 1, 1);
+        cursorIndex--;
+        caretFollow = true;
+        onTextChanged();
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && cursorIndex < (int)content.size())
+    {
+        content.erase(cursorIndex, 1);
+        caretFollow = true;
+        onTextChanged();
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && cursorIndex > 0)
+    {
+        cursorIndex--;
+        caretFollow = true;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && cursorIndex < (int)content.size())
+    {
+        cursorIndex++;
+        caretFollow = true;
+    }
+
+    if (io.KeyShift && io.MouseWheel != 0.0f)
+    {
+        scrollX -= io.MouseWheel * 40.0f;
+    }
+}
+
 
         // ----- Caret position -----
         int col = 0;
         std::string caretLine;
         {
-            int idx = 0;
-            std::istringstream ss2(content.getText());
-            std::string l;
-            int lineStartIdx = 0;
-            while (std::getline(ss2, l))
-            {
-                int lineLen = (int)l.size();
-                if (cursorIndex <= lineStartIdx + lineLen)
-                {
-                    caretLine = l;
-                    col = cursorIndex - lineStartIdx;
-                    break;
-                }
-                lineStartIdx += lineLen + 1;
-            }
+int lineStartIdx = 0;
+for (const auto& cl : lineCache) {
+    int lineLen = (int)cl.text.size();
+    if (cursorIndex <= lineStartIdx + lineLen) {
+        caretLine = cl.text;
+        col = cursorIndex - lineStartIdx;
+        break;
+    }
+    lineStartIdx += lineLen + 1; // +1 for newline
+}
+
         }
 
         float caretXLocal = padX + ImGui::CalcTextSize(caretLine.substr(0, col).c_str()).x;
@@ -591,6 +586,7 @@ void TextEditor::openFile(const std::string &fname)
     std::ostringstream buffer;
     buffer << file.rdbuf();
     content = PieceTable(buffer.str());
+    rebuildCache();
     filename = fname;
     modified = false;
     focusEditor = true;
@@ -605,6 +601,7 @@ void TextEditor::openFile(const std::string &fname)
 void TextEditor::newFile()
 {
     content.clear();
+    rebuildCache();
     filename.clear();
     modified = false;
     focusEditor = true;
@@ -796,3 +793,23 @@ bool TextEditor::IconTextButton(const char *id, ImTextureID icon, const char *la
     return pressed;
 }
 
+void TextEditor::rebuildCache() {
+    lineCache.clear();
+    std::string full = content.getText();
+    std::istringstream ss(full);
+    std::string l;
+    while (std::getline(ss, l)) {
+        CachedLine cl;
+        cl.text = l;
+        cl.width = ImGui::CalcTextSize(l.c_str()).x;
+        lineCache.push_back(std::move(cl));
+    }
+    if (lineCache.empty()) {
+        lineCache.push_back({"", 0.0f});
+    }
+}
+
+void TextEditor::onTextChanged() {
+    rebuildCache();
+    modified = true;
+}
