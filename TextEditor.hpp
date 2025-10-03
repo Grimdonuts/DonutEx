@@ -19,6 +19,11 @@ struct OutputLine {
     ImTextureID icon;
     std::string text;
 };
+struct CachedLine {
+    std::string text;
+    float width;
+};
+
 
 class TextEditor
 {
@@ -42,6 +47,10 @@ public:
     float lineHeight;
     std::unordered_map<std::string, ImTextureID> icons;
     std::vector<OutputLine> outputLines;
+    std::vector<CachedLine> lineCache;
+
+void rebuildCache();
+void onTextChanged();
 private:
     bool closeEditor = false;
     PieceTable content;
