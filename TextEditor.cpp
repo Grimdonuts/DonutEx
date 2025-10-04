@@ -130,21 +130,76 @@ if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEn
 
 
             
-            for (unsigned int c : io.InputQueueCharacters)
-            {
-                // Skip newlines here since we handle them above
-                if (c == '\n' || c == '\r')
-                {
-                    continue;
-                }
-                else if (c >= 32)
-                {
-                    content.insert(cursorIndex, std::string(1, (char)c));
-                    cursorIndex++;
-                    caretFollow = true;
-                    onTextChanged();
-                }
-            }
+// Handle text input (Unicode / IME / new typed chars)
+for (unsigned int c : io.InputQueueCharacters)
+{
+    if (c == '\n' || c == '\r')
+        continue;
+
+    // Only accept non-ASCII here (IME, Unicode)
+    if (c >= 128)
+    {
+        content.insert(cursorIndex, std::string(1, (char)c));
+        cursorIndex++;
+        caretFollow = true;
+        onTextChanged();
+    }
+}
+
+
+
+// Handle repeatable ASCII input (letters, numbers, punctuation)
+auto insertChar = [&](char c) {
+    content.insert(cursorIndex, std::string(1, c));
+    cursorIndex++;
+    caretFollow = true;
+    onTextChanged();
+};
+
+// Letters A–Z
+for (int k = ImGuiKey_A; k <= ImGuiKey_Z; ++k)
+{
+    ImGuiKey key = static_cast<ImGuiKey>(k);
+    if (ImGui::IsKeyPressed(key, true))
+    {
+        char c = (char)('A' + (k - ImGuiKey_A));
+        if (!io.KeyShift) c = (char)tolower(c);
+        insertChar(c);
+    }
+}
+
+
+// Numbers 0–9
+for (int k = ImGuiKey_0; k <= ImGuiKey_9; ++k)
+{
+    ImGuiKey key = static_cast<ImGuiKey>(k);
+    if (ImGui::IsKeyPressed(key, true))
+    {
+        char c = (char)('0' + (k - ImGuiKey_0));
+        insertChar(c);
+    }
+}
+
+
+// Space
+if (ImGui::IsKeyPressed(ImGuiKey_Space, true))
+{
+    insertChar(' ');
+}
+
+// Punctuation examples (you can expand this set as needed)
+// Note: these aren’t all mapped directly in ImGui, but you can add them
+if (ImGui::IsKeyPressed(ImGuiKey_Comma, true)) insertChar(',');
+if (ImGui::IsKeyPressed(ImGuiKey_Period, true)) insertChar('.');
+if (ImGui::IsKeyPressed(ImGuiKey_Slash, true)) insertChar('/');
+if (ImGui::IsKeyPressed(ImGuiKey_Semicolon, true)) insertChar(';');
+if (ImGui::IsKeyPressed(ImGuiKey_Apostrophe, true)) insertChar('\'');
+if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true)) insertChar('[');
+if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) insertChar(']');
+if (ImGui::IsKeyPressed(ImGuiKey_Backslash, true)) insertChar('\\');
+if (ImGui::IsKeyPressed(ImGuiKey_Minus, true)) insertChar('-');
+if (ImGui::IsKeyPressed(ImGuiKey_Equal, true)) insertChar('=');
+
 
             if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && cursorIndex > 0)
             {
