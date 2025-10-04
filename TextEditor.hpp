@@ -52,6 +52,12 @@ public:
 void rebuildCache();
 void onTextChanged();
 private:
+float scrollY = 0.0f;
+bool vDragging = false;
+float vDragMouseStart = 0.0f;
+float vDragScrollStart = 0.0f;
+void indexToLineCol(int index, int& line, int& col);
+int lineColToIndex(int line, int col);
     bool closeEditor = false;
     PieceTable content;
     int cursorIndex = 0;   // NEW: position in content string

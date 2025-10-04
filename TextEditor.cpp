@@ -70,16 +70,17 @@ void TextEditor::renderEditor()
         ImVec2 winSize = ImGui::GetContentRegionAvail();
         const float padX = 4.0f;
         const float padY = 4.0f;
+        const float scrollbarW = 12.0f;
         const float scrollbarH = 12.0f;
+        const float viewW = winSize.x - scrollbarW;
         const float viewH = winSize.y - scrollbarH;
-        const float viewW = winSize.x;
 
         // Background
         draw_list->AddRectFilled(pos, ImVec2(pos.x + winSize.x, pos.y + winSize.y),
                                  ImGui::GetColorU32(ImGuiCol_FrameBg));
 
         // Editor interactive area
-        ImGui::InvisibleButton("editor_area", ImVec2(winSize.x, viewH),
+        ImGui::InvisibleButton("editor_area", ImVec2(viewW, viewH),
                                ImGuiButtonFlags_MouseButtonLeft);
         bool isFocused = ImGui::IsItemFocused();
 
@@ -94,149 +95,203 @@ void TextEditor::renderEditor()
         ImVec2 clipMax = ImVec2(pos.x + viewW, pos.y + viewH);
         draw_list->PushClipRect(clipMin, clipMax, true);
 
-        // Draw text with horizontal offset
-float y = pos.y + padY;
-maxContentWidth = 0.0f;
+        // Calculate visible line range
+        int firstVisibleLine = (int)(scrollY / lineHeight);
+        int visibleLineCount = (int)(viewH / lineHeight) + 2;
+        int lastVisibleLine = std::min(firstVisibleLine + visibleLineCount, (int)lineCache.size());
 
-for (const auto& cl : lineCache) {
-    if (cl.width > maxContentWidth) maxContentWidth = cl.width;
-    ImVec2 textPos = ImVec2(pos.x + padX - scrollX, y);
-    draw_list->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), cl.text.c_str());
-    y += lineHeight;
-}
-
+        // Draw visible lines with offsets
+        maxContentWidth = 0.0f;
+        float y = pos.y + padY - (scrollY - firstVisibleLine * lineHeight);
+        
+        for (int i = firstVisibleLine; i < lastVisibleLine; i++) {
+            const auto& cl = lineCache[i];
+            if (cl.width > maxContentWidth) maxContentWidth = cl.width;
+            ImVec2 textPos = ImVec2(pos.x + padX - scrollX, y);
+            draw_list->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), cl.text.c_str());
+            y += lineHeight;
+        }
 
         // ----- Input handling -----
         ImGuiIO &io = ImGui::GetIO();
-if (isFocused)
+        if (isFocused)
+        {
+            // Handle Enter key directly (InputQueueCharacters may not capture it)
+if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
 {
-    for (unsigned int c : io.InputQueueCharacters)
-    {
-        if (c == '\n' || c == '\r')
-        {
-            content.insert(cursorIndex, "\n");
-            cursorIndex++;
-            caretFollow = true;
-            onTextChanged();
-        }
-        else if (c >= 32)
-        {
-            content.insert(cursorIndex, std::string(1, (char)c));
-            cursorIndex++;
-            caretFollow = true;
-            onTextChanged();
-        }
-    }
-
-    if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && cursorIndex > 0)
-    {
-        content.erase(cursorIndex - 1, 1);
-        cursorIndex--;
-        caretFollow = true;
-        onTextChanged();
-    }
-
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && cursorIndex < (int)content.size())
-    {
-        content.erase(cursorIndex, 1);
-        caretFollow = true;
-        onTextChanged();
-    }
-
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && cursorIndex > 0)
-    {
-        cursorIndex--;
-        caretFollow = true;
-    }
-
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && cursorIndex < (int)content.size())
-    {
-        cursorIndex++;
-        caretFollow = true;
-    }
-
-    if (io.KeyShift && io.MouseWheel != 0.0f)
-    {
-        scrollX -= io.MouseWheel * 40.0f;
-    }
+    const int old = cursorIndex;     // index BEFORE we mutate text
+    content.insert(old, "\n");       // add newline at the old position
+    cursorIndex = old + 1;           // move caret to just after the newline
+    onTextChanged();                 // rebuild cache (now maps to next line, col 0)
+    caretFollow = true;              // ensure it scrolls into view
 }
 
 
-        // ----- Caret position -----
-        int col = 0;
-        std::string caretLine;
-        {
-int lineStartIdx = 0;
-for (const auto& cl : lineCache) {
-    int lineLen = (int)cl.text.size();
-    if (cursorIndex <= lineStartIdx + lineLen) {
-        caretLine = cl.text;
-        col = cursorIndex - lineStartIdx;
-        break;
-    }
-    lineStartIdx += lineLen + 1; // +1 for newline
-}
 
+
+            
+            for (unsigned int c : io.InputQueueCharacters)
+            {
+                // Skip newlines here since we handle them above
+                if (c == '\n' || c == '\r')
+                {
+                    continue;
+                }
+                else if (c >= 32)
+                {
+                    content.insert(cursorIndex, std::string(1, (char)c));
+                    cursorIndex++;
+                    caretFollow = true;
+                    onTextChanged();
+                }
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && cursorIndex > 0)
+            {
+                content.erase(cursorIndex - 1, 1);
+                cursorIndex--;
+                caretFollow = true;
+                onTextChanged();
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete) && cursorIndex < (int)content.size())
+            {
+                content.erase(cursorIndex, 1);
+                caretFollow = true;
+                onTextChanged();
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && cursorIndex > 0)
+            {
+                cursorIndex--;
+                caretFollow = true;
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && cursorIndex < (int)content.size())
+            {
+                cursorIndex++;
+                caretFollow = true;
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+            {
+                int line, col;
+                indexToLineCol(cursorIndex, line, col);
+                if (line > 0) {
+                    cursorIndex = lineColToIndex(line - 1, col);
+                    caretFollow = true;
+                }
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+            {
+                int line, col;
+                indexToLineCol(cursorIndex, line, col);
+                if (line < (int)lineCache.size() - 1) {
+                    cursorIndex = lineColToIndex(line + 1, col);
+                    caretFollow = true;
+                }
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Home))
+            {
+                int line, col;
+                indexToLineCol(cursorIndex, line, col);
+                cursorIndex = lineColToIndex(line, 0);
+                caretFollow = true;
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_End))
+            {
+                int line, col;
+                indexToLineCol(cursorIndex, line, col);
+                if (line < (int)lineCache.size()) {
+                    cursorIndex = lineColToIndex(line, (int)lineCache[line].text.size());
+                }
+                caretFollow = true;
+            }
+
+            // Mouse wheel for vertical scrolling
+            if (!io.KeyShift && io.MouseWheel != 0.0f)
+            {
+                scrollY -= io.MouseWheel * lineHeight * 3.0f;
+            }
+            
+            // Shift+wheel for horizontal scrolling
+            if (io.KeyShift && io.MouseWheel != 0.0f)
+            {
+                scrollX -= io.MouseWheel * 40.0f;
+            }
         }
 
-        float caretXLocal = padX + ImGui::CalcTextSize(caretLine.substr(0, col).c_str()).x;
+        // ----- Caret position calculation (MUST happen after input, after cache rebuild) -----
+        int caretLine, caretCol;
+        indexToLineCol(cursorIndex, caretLine, caretCol);
+        
+        std::string lineText = "";
+        if (caretLine < (int)lineCache.size()) {
+            lineText = lineCache[caretLine].text;
+        }
+        
+        float caretXLocal = padX + ImGui::CalcTextSize(lineText.substr(0, caretCol).c_str()).x;
+        float caretYLocal = caretLine * lineHeight;
+        
         float visibleW = viewW - padX * 2.0f;
+        float visibleH = viewH - padY * 2.0f;
 
-        // Auto-scroll only when caretFollow is set
+        // Auto-scroll when caretFollow is set
         if (caretFollow)
         {
+            // Horizontal scroll
             if (caretXLocal < scrollX)
                 scrollX = caretXLocal;
             if (caretXLocal > scrollX + visibleW)
                 scrollX = caretXLocal - visibleW;
 
+            // Vertical scroll
+            if (caretYLocal < scrollY)
+                scrollY = caretYLocal;
+            if (caretYLocal + lineHeight > scrollY + visibleH)
+                scrollY = caretYLocal + lineHeight - visibleH;
+
             caretFollow = false;
         }
 
-        // Clamp scroll (FIX: add glyph padding so last char/caret is fully visible)
-        float extraPad = ImGui::CalcTextSize("M").x; // safe glyph width
-        float maxScroll = ImMax(0.0f, (maxContentWidth + extraPad) - visibleW);
-        scrollX = ImClamp(scrollX, 0.0f, maxScroll);
+        // Clamp scrolls
+        float extraPad = ImGui::CalcTextSize("M").x;
+        float maxScrollX = ImMax(0.0f, (maxContentWidth + extraPad) - visibleW);
+        scrollX = ImClamp(scrollX, 0.0f, maxScrollX);
+        
+        float totalContentHeight = lineCache.size() * lineHeight;
+        float maxScrollY = ImMax(0.0f, totalContentHeight - visibleH);
+        scrollY = ImClamp(scrollY, 0.0f, maxScrollY);
 
         // Draw caret (blink)
         if (isFocused && (int)(ImGui::GetTime() * 2) % 2 == 0)
         {
-            float cy = pos.y + padY;
-            {
-                int idx = 0;
-                std::istringstream ss2(content.getText());
-                std::string l;
-                int consumed = 0;
-                while (std::getline(ss2, l))
-                {
-                    if (cursorIndex <= consumed + (int)l.size())
-                        break;
-                    consumed += (int)l.size() + 1;
-                    cy += lineHeight;
-                }
-            }
-
-            ImVec2 cursorPos(pos.x + caretXLocal - scrollX, cy);
-            draw_list->AddLine(cursorPos,
-                               ImVec2(cursorPos.x, cursorPos.y + lineHeight - 2),
-                               ImGui::GetColorU32(ImGuiCol_Text));
+            float caretScreenX = pos.x + caretXLocal - scrollX;
+            float caretScreenY = pos.y + padY + caretYLocal - scrollY;
+            
+            draw_list->AddLine(ImVec2(caretScreenX, caretScreenY),
+                               ImVec2(caretScreenX, caretScreenY + lineHeight - 2),
+                               ImGui::GetColorU32(ImGuiCol_Text), 2.0f);
         }
 
         draw_list->PopClipRect();
 
-        // ----- Custom horizontal scrollbar -----
-        ImVec2 barPos = ImVec2(pos.x, pos.y + viewH);
-        ImVec2 barSize = ImVec2(viewW, scrollbarH);
+        // ----- Horizontal scrollbar -----
+        ImVec2 hBarPos = ImVec2(pos.x, pos.y + viewH);
+        ImVec2 hBarSize = ImVec2(viewW, scrollbarH);
 
         ImU32 bgCol   = ImGui::GetColorU32(ImGuiCol_FrameBgHovered);
         ImU32 fillCol = ImGui::GetColorU32(ImGuiCol_ScrollbarGrab);
         ImU32 fillHot = ImGui::GetColorU32(ImGuiCol_ScrollbarGrabHovered);
         ImU32 fillAct = ImGui::GetColorU32(ImGuiCol_ScrollbarGrabActive);
 
-        draw_list->AddRectFilled(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y), bgCol);
+        draw_list->AddRectFilled(hBarPos, ImVec2(hBarPos.x + hBarSize.x, hBarPos.y + hBarSize.y), bgCol);
 
-        float contentW = ImMax(visibleW, maxContentWidth + extraPad); // also add pad here
-        float trackW   = barSize.x;
+        float contentW = ImMax(visibleW, maxContentWidth + extraPad);
+        float trackW   = hBarSize.x;
         float minThumb = 24.0f;
 
         float thumbW = (visibleW / contentW) * trackW;
@@ -246,10 +301,9 @@ for (const auto& cl : lineCache) {
         float denom = ImMax(1.0f, contentW - visibleW);
         float thumbX = (denom > 0.0f) ? (scrollX / denom) * trackRange : 0.0f;
 
-        ImVec2 thumbMin = ImVec2(barPos.x + thumbX, barPos.y);
-        ImVec2 thumbMax = ImVec2(barPos.x + thumbX + thumbW, barPos.y + barSize.y);
+        ImVec2 thumbMin = ImVec2(hBarPos.x + thumbX, hBarPos.y);
+        ImVec2 thumbMax = ImVec2(hBarPos.x + thumbX + thumbW, hBarPos.y + hBarSize.y);
 
-        // Thumb interaction
         ImGui::SetCursorScreenPos(thumbMin);
         ImGui::InvisibleButton("hthumb", ImVec2(thumbW, scrollbarH));
         bool thumbHovered = ImGui::IsItemHovered();
@@ -275,27 +329,83 @@ for (const auto& cl : lineCache) {
             }
         }
 
-        // Track clicks
-        ImGui::SetCursorScreenPos(barPos);
+        ImGui::SetCursorScreenPos(hBarPos);
         ImGui::InvisibleButton("htrack", ImVec2(trackW, scrollbarH));
         if (ImGui::IsItemClicked())
         {
-            float mouseX = io.MousePos.x - barPos.x;
+            float mouseX = io.MousePos.x - hBarPos.x;
             float page = visibleW * 0.8f;
             if (mouseX < thumbX)
                 scrollX = ImMax(0.0f, scrollX - page);
             else if (mouseX > thumbX + thumbW)
-                scrollX = ImMin(maxScroll, scrollX + page);
+                scrollX = ImMin(maxScrollX, scrollX + page);
         }
 
         ImU32 thumbCol = hDragging ? fillAct : (thumbHovered ? fillHot : fillCol);
         draw_list->AddRectFilled(thumbMin, thumbMax, thumbCol, 3.0f);
 
-        scrollX = ImClamp(scrollX, 0.0f, maxScroll);
+        // ----- Vertical scrollbar -----
+        ImVec2 vBarPos = ImVec2(pos.x + viewW, pos.y);
+        ImVec2 vBarSize = ImVec2(scrollbarW, viewH);
+
+        draw_list->AddRectFilled(vBarPos, ImVec2(vBarPos.x + vBarSize.x, vBarPos.y + vBarSize.y), bgCol);
+
+        float trackH = vBarSize.y;
+        float thumbH = (visibleH / totalContentHeight) * trackH;
+        thumbH = ImClamp(thumbH, minThumb, trackH);
+
+        float vTrackRange = trackH - thumbH;
+        float vDenom = ImMax(1.0f, totalContentHeight - visibleH);
+        float thumbY = (vDenom > 0.0f) ? (scrollY / vDenom) * vTrackRange : 0.0f;
+
+        ImVec2 vThumbMin = ImVec2(vBarPos.x, vBarPos.y + thumbY);
+        ImVec2 vThumbMax = ImVec2(vBarPos.x + vBarSize.x, vBarPos.y + thumbY + thumbH);
+
+        ImGui::SetCursorScreenPos(vThumbMin);
+        ImGui::InvisibleButton("vthumb", ImVec2(scrollbarW, thumbH));
+        bool vThumbHovered = ImGui::IsItemHovered();
+
+        if (ImGui::IsItemActivated())
+        {
+            vDragging = true;
+            vDragMouseStart = io.MousePos.y;
+            vDragScrollStart = scrollY;
+        }
+        if (vDragging)
+        {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                float dy = io.MousePos.y - vDragMouseStart;
+                float newThumbY = (vDragScrollStart / vDenom) * vTrackRange + dy;
+                newThumbY = ImClamp(newThumbY, 0.0f, vTrackRange);
+                scrollY = (vDenom > 0.0f) ? (newThumbY / vTrackRange) * vDenom : 0.0f;
+            }
+            else
+            {
+                vDragging = false;
+            }
+        }
+
+        ImGui::SetCursorScreenPos(vBarPos);
+        ImGui::InvisibleButton("vtrack", ImVec2(scrollbarW, trackH));
+        if (ImGui::IsItemClicked())
+        {
+            float mouseY = io.MousePos.y - vBarPos.y;
+            float page = visibleH * 0.8f;
+            if (mouseY < thumbY)
+                scrollY = ImMax(0.0f, scrollY - page);
+            else if (mouseY > thumbY + thumbH)
+                scrollY = ImMin(maxScrollY, scrollY + page);
+        }
+
+        ImU32 vThumbCol = vDragging ? fillAct : (vThumbHovered ? fillHot : fillCol);
+        draw_list->AddRectFilled(vThumbMin, vThumbMax, vThumbCol, 3.0f);
+
+        scrollX = ImClamp(scrollX, 0.0f, maxScrollX);
+        scrollY = ImClamp(scrollY, 0.0f, maxScrollY);
     }
     ImGui::End();
 }
-
 
 void TextEditor::renderExplorer(ImVec2 workPos, ImVec2 workSize, float explorerWidth)
 {
@@ -601,11 +711,18 @@ void TextEditor::openFile(const std::string &fname)
 void TextEditor::newFile()
 {
     content.clear();
+    content.insert(0, "");   // ensures clean buffer
     rebuildCache();
     filename.clear();
     modified = false;
     focusEditor = true;
+    cursorIndex = 0;         // reset caret
     addOutput(icons["document"], "New file created");
+    cursorIndex = 0;
+scrollX = 0.0f;
+scrollY = 0.0f;
+caretFollow = true;
+
 }
 
 void TextEditor::saveFile()
@@ -792,24 +909,82 @@ bool TextEditor::IconTextButton(const char *id, ImTextureID icon, const char *la
     ImGui::GetWindowDrawList()->AddText(textPos, IM_COL32_WHITE, label);
     return pressed;
 }
-
 void TextEditor::rebuildCache() {
     lineCache.clear();
-    std::string full = content.getText();
-    std::istringstream ss(full);
-    std::string l;
-    while (std::getline(ss, l)) {
-        CachedLine cl;
-        cl.text = l;
-        cl.width = ImGui::CalcTextSize(l.c_str()).x;
-        lineCache.push_back(std::move(cl));
+
+    const std::string full = content.getText();
+    const size_t n = full.size();
+
+    // Split on '\n' but PRESERVE a trailing empty line if the text ends with '\n'
+    size_t start = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (full[i] == '\n') {
+            std::string seg = full.substr(start, i - start); // may be empty
+            CachedLine cl;
+            cl.text  = std::move(seg);
+            cl.width = ImGui::CalcTextSize(cl.text.c_str()).x;
+            lineCache.push_back(std::move(cl));
+            start = i + 1;
+        }
     }
+
+    if (start < n) {
+        // Remainder after the last newline
+        std::string seg = full.substr(start);
+        CachedLine cl;
+        cl.text  = std::move(seg);
+        cl.width = ImGui::CalcTextSize(cl.text.c_str()).x;
+        lineCache.push_back(std::move(cl));
+    } else {
+        // If the text ENDS with '\n', we need a trailing empty visual line
+        if (!full.empty() && full.back() == '\n') {
+            lineCache.push_back({"", 0.0f});
+        }
+    }
+
+    // Ensure there's ALWAYS at least one visual line for an empty buffer
     if (lineCache.empty()) {
         lineCache.push_back({"", 0.0f});
     }
 }
 
+
+
 void TextEditor::onTextChanged() {
     rebuildCache();
     modified = true;
+}
+
+void TextEditor::indexToLineCol(int index, int& line, int& col) {
+    int pos = 0;
+    line = 0;
+    for (const auto& cl : lineCache) {
+        int lineLen = (int)cl.text.size();
+        if (index <= pos + lineLen) {
+            col = index - pos;
+            return;
+        }
+        pos += lineLen + 1; // +1 for newline
+        line++;
+    }
+    // Clamp to last position
+    if (!lineCache.empty()) {
+        line = (int)lineCache.size() - 1;
+        col = (int)lineCache.back().text.size();
+    } else {
+        line = 0;
+        col = 0;
+    }
+}
+
+int TextEditor::lineColToIndex(int line, int col) {
+    int index = 0;
+    for (int i = 0; i < line && i < (int)lineCache.size(); i++) {
+        index += (int)lineCache[i].text.size() + 1; // +1 for newline
+    }
+    if (line < (int)lineCache.size()) {
+        col = std::min(col, (int)lineCache[line].text.size());
+        index += col;
+    }
+    return index;
 }
