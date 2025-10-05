@@ -576,6 +576,15 @@ void TextEditor::showOpenDialog()
         {"C++ Header", "hpp"},
         {"Text File", "txt"},
         {"Lua Script", "lua"}};
+    
+    // Initialize NFD only if needed
+    static bool nfd_initialized = false;
+    if (!nfd_initialized) {
+        if (NFD_Init() == NFD_OKAY) {
+            nfd_initialized = true;
+        }
+    }
+    
     nfdresult_t result = NFD_OpenDialog(&outPath, filters, 4, nullptr); // instead of nullptr here, lets pass the current dir our file explorer is looking at
     if (result == NFD_OKAY)
     {
@@ -597,6 +606,14 @@ void TextEditor::showSaveDialog(const std::string &defaultFileName)
         {"C++ Header", "hpp"},
         {"Text File", "txt"},
         {"Lua Script", "lua"}};
+
+    // Initialize NFD only if needed
+    static bool nfd_initialized = false;
+    if (!nfd_initialized) {
+        if (NFD_Init() == NFD_OKAY) {
+            nfd_initialized = true;
+        }
+    }
 
     nfdresult_t result = NFD_SaveDialog(&savePath, filters, 4, nullptr, defaultFileName.c_str()); // instead of nullptr here, lets pass the current dir our file explorer is looking at
     if (result == NFD_OKAY)
