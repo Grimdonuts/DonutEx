@@ -52,6 +52,7 @@ public:
 void rebuildCache();
 void onTextChanged();
 private:
+bool showGrid = false;
 float scrollY = 0.0f;
 bool vDragging = false;
 float vDragMouseStart = 0.0f;
