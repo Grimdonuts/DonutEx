@@ -1,5 +1,4 @@
 #pragma once
-
 #include <string>
 #include <vector>
 #include <map>
@@ -9,12 +8,9 @@
 #include <cctype>
 #include "imgui.h"
 #include "PieceTable.hpp"
-
 struct ImGuiInputTextCallbackData;
 struct lua_State;
-
 class LuaBindings;
-
 struct OutputLine {
     ImTextureID icon;
     std::string text;
@@ -23,8 +19,6 @@ struct CachedLine {
     std::string text;
     float width;
 };
-
-
 class TextEditor
 {
 public:
@@ -32,36 +26,30 @@ public:
     ~TextEditor();
     std::string filename;
     std::unordered_map<std::string, ImFont *> fontPreviews;
-   // std::string getCurrentLine();
-  //  std::string getCurrentWord();
-    //std::pair<int, int> getCursorPosition();
-   // void insertText(const std::string &text);
     void addOutput(ImTextureID icon, const std::string &text);
     void addOutput(const std::string &text); // text only
-    // void replaceCurrentWordWith(const std::string &full);
     bool render();
     void renderSettings();
     void handleKeyboardShortcuts();
     void openFile(const std::string &fname);
-  //  ImVec2 getCursorScreenPos();
     float lineHeight;
     std::unordered_map<std::string, ImTextureID> icons;
     std::vector<OutputLine> outputLines;
     std::vector<CachedLine> lineCache;
-
-void rebuildCache();
-void onTextChanged();
+    void rebuildCache();
+    void onTextChanged();
+    
 private:
-bool showGrid = false;
-float scrollY = 0.0f;
-bool vDragging = false;
-float vDragMouseStart = 0.0f;
-float vDragScrollStart = 0.0f;
-void indexToLineCol(int index, int& line, int& col);
-int lineColToIndex(int line, int col);
+    bool showGrid = false;
+    float scrollY = 0.0f;
+    bool vDragging = false;
+    float vDragMouseStart = 0.0f;
+    float vDragScrollStart = 0.0f;
+    void indexToLineCol(int index, int& line, int& col);
+    int lineColToIndex(int line, int col);
     bool closeEditor = false;
     PieceTable content;
-    int cursorIndex = 0;   // NEW: position in content string
+    int cursorIndex = 0;
     bool focusEditor = false;
     std::string commandInput;
     std::vector<std::string> fileList;
@@ -91,14 +79,27 @@ int lineColToIndex(int line, int col);
     void renderExplorer(ImVec2 workPos, ImVec2 workSize, float explorerWidth);
     void renderOutput(ImVec2 workPos, ImVec2 workSize, float outputHeight, float explorerWidth);
     void renderMenuBar();
-    // TextEditor.hpp  (add to private section)
-// Horizontal scrolling state
-float scrollX = 0.0f;             // current horizontal scroll in pixels
-float maxContentWidth = 0.0f;     // widest line width in pixels (updated each frame)
-bool  hDragging = false;          // dragging the horizontal thumb?
-float hDragMouseStart = 0.0f;     // mouse x at drag start (screen space)
-float hDragScrollStart = 0.0f;    // scrollX at drag start
-
-bool caretFollow = true;
-
+    
+    // Horizontal scrolling state
+    float scrollX = 0.0f;
+    float maxContentWidth = 0.0f;
+    bool  hDragging = false;
+    float hDragMouseStart = 0.0f;
+    float hDragScrollStart = 0.0f;
+    bool caretFollow = true;
+    
+    // ========== ADD THESE 3 LINES FOR SELECTION ==========
+    int selectionStart = -1;
+    int selectionEnd = -1;
+    bool isDragging = false;
+    
+    // ========== ADD THESE 7 METHOD DECLARATIONS ==========
+    bool hasSelection() const;
+    std::string getSelectedText() const;
+    void deleteSelection();
+    void copySelection();
+    void cutSelection();
+    void pasteFromClipboard();
+    void selectAll();
 };
+
