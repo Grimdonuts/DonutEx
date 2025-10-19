@@ -1,99 +1,88 @@
+// TextEditor.hpp
 #pragma once
+
 #include <string>
 #include <vector>
 #include <map>
 #include <unordered_map>
 #include <functional>
-#include <filesystem>
-#include <cctype>
 #include "imgui.h"
 #include "PieceTable.hpp"
-struct ImGuiInputTextCallbackData;
-struct lua_State;
+
 class LuaBindings;
+class FileOperations;
+class EditorRenderer;
+class FileExplorer;
+class OutputPanel;
+class IconManager;
+class EditorCommands;
+
 struct OutputLine {
     ImTextureID icon;
     std::string text;
 };
+
 struct CachedLine {
     std::string text;
     float width;
 };
+
 class TextEditor
 {
 public:
     TextEditor();
     ~TextEditor();
-    std::string filename;
-    std::unordered_map<std::string, ImFont *> fontPreviews;
-    void addOutput(ImTextureID icon, const std::string &text);
-    void addOutput(const std::string &text); // text only
-    bool render();
-    void renderSettings();
-    void handleKeyboardShortcuts();
-    void openFile(const std::string &fname);
-    float lineHeight;
-    std::unordered_map<std::string, ImTextureID> icons;
-    std::vector<OutputLine> outputLines;
-    std::vector<CachedLine> lineCache;
-    void rebuildCache();
-    void onTextChanged();
     
-private:
-    bool showGrid = false;
-    float scrollY = 0.0f;
-    bool vDragging = false;
-    float vDragMouseStart = 0.0f;
-    float vDragScrollStart = 0.0f;
-    void indexToLineCol(int index, int& line, int& col);
-    int lineColToIndex(int line, int col);
-    bool closeEditor = false;
+    bool render();
+    void handleKeyboardShortcuts();
+    void openFile(const std::string& fname);
+    void addOutput(ImTextureID icon, const std::string& text);
+    void addOutput(const std::string& text);
+    
+    // Public data members (accessed by subsystems)
+    std::string filename;
     PieceTable content;
-    int cursorIndex = 0;
-    bool focusEditor = false;
-    std::string commandInput;
-    std::vector<std::string> fileList;
     bool modified;
-    bool showFileExplorer = true;
-    bool showOutput = true;
-    bool showSettings = false;
+    bool showFileExplorer;
+    bool showOutput;
+    bool showSettings;
+    bool showGrid;
+    bool focusEditor;
+    bool closeEditor;
+    
+    int cursorIndex;
     int cursorLine;
     int cursorColumn;
-    std::map<std::string, std::function<void()>> commands;
-    ImGuiInputTextFlags inputFlags{};
-    static int textInputCallback(ImGuiInputTextCallbackData *data);
-    LuaBindings *lua_;
-    void registerCommands();
-    void executeCommand(const std::string &cmd);
-    void refreshFileList();
-    void newFile();
-    void saveFile();
-    void showOpenDialog();
-    void showSaveDialog(const std::string &defaultFileName);
-    ImTextureID loadSVGTexture(const char *filename, float targetHeight);
-    void loadIcons(float dpiScale = 1.0f);
-    bool IconTextButton(const char *id, ImTextureID icon, const char *label, const ImVec2 &button_size);
-    ImGuiID editorInputId = 0;
-    ImVec2 lastCaretScreenPos = ImVec2(0, 0);
-    void renderEditor();
-    void renderExplorer(ImVec2 workPos, ImVec2 workSize, float explorerWidth);
-    void renderOutput(ImVec2 workPos, ImVec2 workSize, float outputHeight, float explorerWidth);
-    void renderMenuBar();
+    int selectionStart;
+    int selectionEnd;
+    bool isDragging;
     
-    // Horizontal scrolling state
-    float scrollX = 0.0f;
-    float maxContentWidth = 0.0f;
-    bool  hDragging = false;
-    float hDragMouseStart = 0.0f;
-    float hDragScrollStart = 0.0f;
-    bool caretFollow = true;
+    float scrollX;
+    float scrollY;
+    float maxContentWidth;
+    float lineHeight;
+    bool caretFollow;
     
-    // ========== ADD THESE 3 LINES FOR SELECTION ==========
-    int selectionStart = -1;
-    int selectionEnd = -1;
-    bool isDragging = false;
+    // Scrollbar state
+    bool hDragging;
+    float hDragMouseStart;
+    float hDragScrollStart;
+    bool vDragging;
+    float vDragMouseStart;
+    float vDragScrollStart;
     
-    // ========== ADD THESE 7 METHOD DECLARATIONS ==========
+    std::vector<CachedLine> lineCache;
+    std::vector<OutputLine> outputLines;
+    std::unordered_map<std::string, ImTextureID> icons;
+    std::unordered_map<std::string, ImFont*> fontPreviews;
+    
+    // Cache and position helpers
+    void rebuildCache();
+    void onTextChanged();
+    void indexToLineCol(int index, int& line, int& col);
+    int lineColToIndex(int line, int col);
+    
+    // Selection helpers
     bool hasSelection() const;
     std::string getSelectedText() const;
     void deleteSelection();
@@ -101,5 +90,19 @@ private:
     void cutSelection();
     void pasteFromClipboard();
     void selectAll();
+    
+private:
+    LuaBindings* lua_;
+    FileOperations* fileOps_;
+    EditorRenderer* renderer_;
+    FileExplorer* explorer_;
+    OutputPanel* outputPanel_;
+    IconManager* iconManager_;
+    EditorCommands* commands_;
+    
+    friend class FileOperations;
+    friend class EditorRenderer;
+    friend class FileExplorer;
+    friend class OutputPanel;
+    friend class EditorCommands;
 };
-

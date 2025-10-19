@@ -12,6 +12,12 @@ set(MAIN_SOURCES
     TextEditor.cpp
     LuaBindings.cpp
     PieceTable.cpp
+    FileOperations.cpp
+    EditorRenderer.cpp
+    FileExplorer.cpp
+    OutputPanel.cpp
+    IconManager.cpp
+    EditorCommands.cpp
 )
 
 include_directories(
