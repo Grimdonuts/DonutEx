@@ -47,6 +47,8 @@ public:
     bool showOutput;
     bool showSettings;
     bool showGrid;
+    bool showLineNumbers;
+    
     bool focusEditor;
     bool closeEditor;
     

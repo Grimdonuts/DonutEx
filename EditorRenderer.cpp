@@ -56,7 +56,11 @@ void EditorRenderer::renderMenuBar()
         {
             ImGui::MenuItem("File Explorer", nullptr, &editor_->showFileExplorer);
             ImGui::MenuItem("Output Panel", nullptr, &editor_->showOutput);
-            ImGui::MenuItem("Show Gridlines", nullptr, &editor_->showGrid);
+            // toggle grid
+            if (ImGui::MenuItem("Show Grid", nullptr, editor_->showGrid))
+                editor_->showGrid = !editor_->showGrid;
+            // toggle line numbers
+            ImGui::MenuItem("Show Line Numbers", nullptr, &editor_->showLineNumbers);
             ImGui::EndMenu();
         }
 
@@ -115,6 +119,21 @@ void EditorRenderer::renderGrid(ImDrawList* drawList, ImVec2 pos, float viewW, f
     }
 }
 
+// helper: compute gutter width
+static float computeGutterWidth(int totalLines, float cellWidth, float /*padX*/)
+{
+    int lines = std::max(1, totalLines);
+    int digits = 1;
+    while (lines >= 10) { lines /= 10; digits++; }
+    // Reserve at least 6 digits (e.g. 100,000) so gutter doesn't jump suddenly
+    digits = std::max(digits, 6);
+
+    // give one "character" of padding on left and right inside the gutter
+    float sidePadding = cellWidth;
+    // total gutter = left sidePadding + digits*cellWidth + right sidePadding
+    return sidePadding + (digits * cellWidth) + sidePadding;
+}
+
 void EditorRenderer::renderSelection(ImDrawList* drawList, ImVec2 pos, float cellWidth,
                                      float lineHeight, float padX, float padY,
                                      int firstVisibleLine, int lastVisibleLine)
@@ -139,7 +158,7 @@ void EditorRenderer::renderSelection(ImDrawList* drawList, ImVec2 pos, float cel
         int colStart = (line == selMinLine) ? selMinCol : 0;
         int colEnd = (line == selMaxLine) ? selMaxCol : (int)editor_->lineCache[line].text.size();
 
-        float lineY = pos.y + padY - editor_->scrollY + line * lineHeight;
+        float lineY = pos.y + padY - editor_->scrollY + (line - firstVisibleLine) * lineHeight + firstVisibleLine * lineHeight;
         float x1 = pos.x + padX - editor_->scrollX + colStart * cellWidth;
         float x2 = pos.x + padX - editor_->scrollX + colEnd * cellWidth;
 
@@ -153,14 +172,14 @@ void EditorRenderer::renderVisibleLines(ImDrawList* drawList, ImVec2 pos, float 
     editor_->maxContentWidth = 0.0f;
     float y = pos.y + padY - (editor_->scrollY - firstVisibleLine * editor_->lineHeight);
 
-    for (int i = firstVisibleLine; i < lastVisibleLine; i++)
+    for (int i = firstVisibleLine; i < lastVisibleLine && i < (int)editor_->lineCache.size(); i++)
     {
         const auto& cl = editor_->lineCache[i];
         if (cl.width > editor_->maxContentWidth)
             editor_->maxContentWidth = cl.width;
         ImVec2 textPos(roundf(pos.x + padX - editor_->scrollX), roundf(y));
         drawList->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), cl.text.c_str());
-        y += editor_->lineHeight;
+         y += editor_->lineHeight;
     }
 }
 
@@ -450,8 +469,9 @@ void EditorRenderer::renderCaret(ImDrawList* drawList, ImVec2 pos, float padX, f
     int caretLine, caretCol;
     editor_->indexToLineCol(editor_->cursorIndex, caretLine, caretCol);
 
+    // padX here is expected to include gutter offset
     float caretXLocal = padX + caretCol * cellWidth;
-    float caretYLocal = caretLine * lineHeight;
+    float caretYLocal = (caretLine) * lineHeight;
 
     float caretScreenX = pos.x + caretXLocal - editor_->scrollX;
     float caretScreenY = pos.y + padY + caretYLocal - editor_->scrollY;
@@ -466,6 +486,7 @@ void EditorRenderer::renderCaret(ImDrawList* drawList, ImVec2 pos, float padX, f
 void EditorRenderer::handleEditorInput(ImVec2 pos, float viewW, float viewH, float padX, float padY,
                                        float cellWidth, float lineHeight, bool isFocused)
 {
+    // padX here should already include gutter when called
     handleMouseInput(pos, padX, padY, cellWidth, lineHeight);
     
     if (isFocused)
@@ -685,45 +706,82 @@ void EditorRenderer::renderEditor()
         const float viewW = winSize.x - scrollbarW;
         const float viewH = winSize.y - scrollbarH;
 
+        // compute visible range
+        int firstVisibleLine = std::max(0, (int)std::floor(editor_->scrollY / editor_->lineHeight));
+        int lastVisibleLine = std::min((int)editor_->lineCache.size(), firstVisibleLine + (int)std::ceil(viewH / editor_->lineHeight) + 1);
+
+        // gutter for line numbers
+        // compute gutterWidth (does NOT include the external padX)
+        float gutterWidth = editor_->showLineNumbers ? computeGutterWidth((int)editor_->lineCache.size(), cellWidth, padX) : 0.0f;
+        // textPadX shifts the text area: gutter occupies gutterWidth, then we apply padX between gutter and text
+        float textPadX = gutterWidth + padX;
+
         // Background
         drawList->AddRectFilled(pos, ImVec2(pos.x + winSize.x, pos.y + winSize.y),
                                ImGui::GetColorU32(ImGuiCol_FrameBg));
 
+        // draw gutter background + line numbers
+        if (editor_->showLineNumbers)
+        {
+            // gutter should start flush at the left content area
+            ImVec2 gutterStart = ImVec2(pos.x, pos.y);
+            ImVec2 gutterEnd   = ImVec2(pos.x + gutterWidth, pos.y + viewH);
+
+            ImU32 gutterBg = ImGui::GetColorU32(ImGuiCol_ScrollbarBg);
+            // round coordinates for crisp fill
+            drawList->AddRectFilled(ImVec2(roundf(gutterStart.x), roundf(gutterStart.y)),
+                                    ImVec2(roundf(gutterEnd.x), roundf(gutterEnd.y)),
+                                    gutterBg);
+
+            // compute digits reserved (must match computeGutterWidth logic: reserve at least 6)
+            int totalLines = std::max(1, (int)editor_->lineCache.size());
+            int digits = 1;
+            int tmp = totalLines;
+            while (tmp >= 10) { tmp /= 10; digits++; }
+            digits = std::max(digits, 6);
+
+            // internal padding used for numbers (one character on each side)
+            float sidePad = cellWidth;
+            // inner area where numbers live: start + sidePad, width = digits*cellWidth
+            float innerStartX = gutterStart.x + sidePad;
+            float innerWidth  = (float)digits * cellWidth;
+
+            for (int line = firstVisibleLine; line < lastVisibleLine; ++line)
+            {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%d", line + 1);
+                float numWidth = ImGui::CalcTextSize(buf).x;
+
+                // horizontally center the number inside the reserved digits area and round
+                float numX = innerStartX + (innerWidth - numWidth) * 0.5f;
+                numX = roundf(numX);
+
+                // vertical center the number within the line and round
+                float lineTop = pos.y + padY + (line - firstVisibleLine) * editor_->lineHeight - (editor_->scrollY - firstVisibleLine * editor_->lineHeight);
+                float textLineHeight = ImGui::GetTextLineHeight();
+                float numY = lineTop + (editor_->lineHeight - textLineHeight) * 0.5f;
+                numY = roundf(numY);
+
+                drawList->AddText(ImVec2(numX, numY), ImGui::GetColorU32(ImGuiCol_TextDisabled), buf);
+            }
+        }
+
         // Grid
-        renderGrid(drawList, pos, viewW, viewH, cellWidth, editor_->lineHeight, padX, padY);
+        renderGrid(drawList, pos, viewW, viewH, cellWidth, editor_->lineHeight, textPadX, padY);
 
         // Editor interactive area
         ImGui::InvisibleButton("editor_area", ImVec2(viewW, viewH), ImGuiButtonFlags_MouseButtonLeft);
         bool isFocused = ImGui::IsItemFocused();
 
-        // Clipping
-        ImVec2 clipMin = ImVec2(pos.x, pos.y);
-        ImVec2 clipMax = ImVec2(pos.x + viewW, pos.y + viewH);
-        drawList->PushClipRect(clipMin, clipMax, true);
+        // render selection, lines, caret, and handle input — pass textPadX so rendering is shifted
+        renderSelection(drawList, pos, cellWidth, editor_->lineHeight, textPadX, padY, firstVisibleLine, lastVisibleLine);
+        renderVisibleLines(drawList, pos, textPadX, padY, firstVisibleLine, lastVisibleLine);
+        renderCaret(drawList, pos, textPadX, padY, cellWidth, editor_->lineHeight, isFocused);
 
-        // Calculate visible line range
-        int firstVisibleLine = (int)(editor_->scrollY / editor_->lineHeight);
-        int visibleLineCount = (int)(viewH / editor_->lineHeight) + 2;
-        int lastVisibleLine = std::min(firstVisibleLine + visibleLineCount, (int)editor_->lineCache.size());
+        handleEditorInput(pos, viewW, viewH, textPadX, padY, cellWidth, editor_->lineHeight, isFocused);
 
-        // Selection highlight
-        renderSelection(drawList, pos, cellWidth, editor_->lineHeight, padX, padY, firstVisibleLine, lastVisibleLine);
-
-        // Visible lines
-        renderVisibleLines(drawList, pos, padX, padY, firstVisibleLine, lastVisibleLine);
-
-        // Input handling
-        handleEditorInput(pos, viewW, viewH, padX, padY, cellWidth, editor_->lineHeight, isFocused);
-
-        // Caret
-        renderCaret(drawList, pos, padX, padY, cellWidth, editor_->lineHeight, isFocused);
-
-        drawList->PopClipRect();
-
-        // Scrollbars
-        float visibleW = viewW - padX * 2.0f;
-        float visibleH = viewH - padY * 2.0f;
-        renderScrollbars(pos, viewW, viewH, scrollbarW, scrollbarH, cellWidth, editor_->lineHeight, visibleW, visibleH);
+        // scrollbars (leave cellWidth so they can compute extraPad)
+        renderScrollbars(pos, viewW, viewH, scrollbarW, scrollbarH, cellWidth, editor_->lineHeight, viewW, viewH);
     }
     ImGui::End();
 }

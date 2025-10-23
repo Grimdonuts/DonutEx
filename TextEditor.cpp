@@ -19,6 +19,7 @@ TextEditor::TextEditor()
       showOutput(true),
       showSettings(false),
       showGrid(false),
+      showLineNumbers(true),
       focusEditor(false),
       closeEditor(false),
       cursorIndex(0),
