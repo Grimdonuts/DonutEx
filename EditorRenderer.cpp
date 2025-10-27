@@ -262,9 +262,8 @@ void EditorRenderer::handleKeyboardInput()
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
     {
         editor_->deleteSelection();
-        editor_->content.insert(editor_->cursorIndex, "\n");
-        editor_->cursorIndex++;
-        editor_->onTextChanged();
+        editor_->applyInsert(editor_->cursorIndex, "\n");
+        // editor_->cursorIndex is updated by applyInsert
         editor_->caretFollow = true;
     }
 
@@ -276,10 +275,10 @@ void EditorRenderer::handleKeyboardInput()
         if (c >= 32)
         {
             editor_->deleteSelection();
-            editor_->content.insert(editor_->cursorIndex, std::string(1, (char)c));
-            editor_->cursorIndex++;
+            char ch = (char)c;
+            editor_->applyInsert(editor_->cursorIndex, std::string(1, ch));
             editor_->caretFollow = true;
-            editor_->onTextChanged();
+            // onTextChanged called inside applyInsert
         }
     }
 
@@ -288,13 +287,11 @@ void EditorRenderer::handleKeyboardInput()
         if (editor_->hasSelection())
         {
             editor_->deleteSelection();
-            editor_->onTextChanged();
+            // onTextChanged already triggered
         }
         else if (editor_->cursorIndex > 0)
         {
-            editor_->content.erase(editor_->cursorIndex - 1, 1);
-            editor_->cursorIndex--;
-            editor_->onTextChanged();
+            editor_->applyErase(editor_->cursorIndex - 1, 1);
         }
         editor_->caretFollow = true;
     }
@@ -304,12 +301,11 @@ void EditorRenderer::handleKeyboardInput()
         if (editor_->hasSelection())
         {
             editor_->deleteSelection();
-            editor_->onTextChanged();
+            // onTextChanged already triggered
         }
         else if (editor_->cursorIndex < (int)editor_->content.size())
         {
-            editor_->content.erase(editor_->cursorIndex, 1);
-            editor_->onTextChanged();
+            editor_->applyErase(editor_->cursorIndex, 1);
         }
         editor_->caretFollow = true;
     }
@@ -446,6 +442,16 @@ void EditorRenderer::handleKeyboardInput()
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A))
     {
         editor_->selectAll();
+    }
+
+    // Undo / Redo
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z))
+    {
+        editor_->undo();
+    }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y))
+    {
+        editor_->redo();
     }
 
     // Mouse wheel scrolling

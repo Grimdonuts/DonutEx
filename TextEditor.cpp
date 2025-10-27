@@ -158,100 +158,135 @@ void TextEditor::addOutput(const std::string& text)
     addOutput((ImTextureID)0, text);
 }
 
-// Cache and position helpers
-void TextEditor::rebuildCache()
+// New edit helpers
+void TextEditor::clearUndoRedo()
 {
-    lineCache.clear();
-
-    const std::string full = content.getText();
-    const size_t n = full.size();
-
-    const char* sample = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    float cellWidth = ImGui::CalcTextSize(sample).x / (float)strlen(sample);
-
-    size_t start = 0;
-    for (size_t i = 0; i < n; ++i)
-    {
-        if (full[i] == '\n')
-        {
-            std::string seg = full.substr(start, i - start);
-            CachedLine cl;
-            cl.text = std::move(seg);
-            cl.width = cl.text.size() * cellWidth;
-            lineCache.push_back(std::move(cl));
-            start = i + 1;
-        }
-    }
-
-    if (start < n)
-    {
-        std::string seg = full.substr(start);
-        CachedLine cl;
-        cl.text = std::move(seg);
-        cl.width = cl.text.size() * cellWidth;
-        lineCache.push_back(std::move(cl));
-    }
-    else
-    {
-        if (!full.empty() && full.back() == '\n')
-        {
-            lineCache.push_back({"", 0.0f});
-        }
-    }
-
-    if (lineCache.empty())
-    {
-        lineCache.push_back({"", 0.0f});
-    }
+    undoStack_.clear();
+    redoStack_.clear();
 }
 
-void TextEditor::onTextChanged()
+void TextEditor::applyInsert(int pos, const std::string& text)
 {
-    rebuildCache();
-    modified = true;
+    if (text.empty()) return;
+    // clamp pos
+    int maxPos = (int)content.size();
+    if (pos < 0) pos = 0;
+    if (pos > maxPos) pos = maxPos;
+
+    // perform insert
+    content.insert((size_t)pos, text);
+
+    // record action
+    EditAction act;
+    act.type = EditAction::Type::Insert;
+    act.pos = pos;
+    act.text = text;
+    undoStack_.push_back(std::move(act));
+
+    // clear redo
+    redoStack_.clear();
+
+    // update cursor and state
+    cursorIndex = pos + (int)text.size();
+    selectionStart = selectionEnd = -1;
+    onTextChanged();
+    caretFollow = true;
 }
 
-void TextEditor::indexToLineCol(int index, int& line, int& col)
+void TextEditor::applyErase(int pos, int len)
 {
-    int pos = 0;
-    line = 0;
-    for (const auto& cl : lineCache)
-    {
-        int lineLen = (int)cl.text.size();
-        if (index <= pos + lineLen)
-        {
-            col = index - pos;
-            return;
-        }
-        pos += lineLen + 1;
-        line++;
-    }
-    
-    if (!lineCache.empty())
-    {
-        line = (int)lineCache.size() - 1;
-        col = (int)lineCache.back().text.size();
-    }
-    else
-    {
-        line = 0;
-        col = 0;
-    }
+    if (len <= 0) return;
+    int maxPos = (int)content.size();
+    if (pos < 0) pos = 0;
+    if (pos >= maxPos) return;
+    if (pos + len > maxPos) len = maxPos - pos;
+
+    // capture erased text
+    std::string full = content.getText();
+    std::string erased = full.substr((size_t)pos, (size_t)len);
+
+    // perform erase
+    content.erase((size_t)pos, (size_t)len);
+
+    // record action
+    EditAction act;
+    act.type = EditAction::Type::Erase;
+    act.pos = pos;
+    act.text = erased;
+    undoStack_.push_back(std::move(act));
+
+    // clear redo
+    redoStack_.clear();
+
+    // update cursor and state
+    cursorIndex = pos;
+    selectionStart = selectionEnd = -1;
+    onTextChanged();
+    caretFollow = true;
 }
 
-int TextEditor::lineColToIndex(int line, int col)
+void TextEditor::undo()
 {
-    int index = 0;
-    for (int i = 0; i < line && i < (int)lineCache.size(); i++)
+    if (undoStack_.empty()) return;
+    EditAction act = std::move(undoStack_.back());
+    undoStack_.pop_back();
+
+    // inverse operation
+    if (act.type == EditAction::Type::Insert)
     {
-        index += (int)lineCache[i].text.size() + 1;
+        // remove the inserted text
+        int pos = act.pos;
+        int len = (int)act.text.size();
+        // perform erase without recording a new undo (so push to redo)
+        content.erase((size_t)pos, (size_t)len);
+        // push to redo stack the same insert action (so redo will reapply)
+        redoStack_.push_back(act);
+        cursorIndex = pos;
     }
-    if (line < (int)lineCache.size())
+    else if (act.type == EditAction::Type::Erase)
     {
-        col = std::min(col, (int)lineCache[line].text.size());
-        index += col;
+        // re-insert the erased text
+        int pos = act.pos;
+        const std::string& t = act.text;
+        content.insert((size_t)pos, t);
+        // push to redo stack the erase action (so redo will reapply erase)
+        redoStack_.push_back(act);
+        cursorIndex = pos + (int)t.size();
     }
-    return index;
+
+    selectionStart = selectionEnd = -1;
+    onTextChanged();
+    caretFollow = true;
+}
+
+void TextEditor::redo()
+{
+    if (redoStack_.empty()) return;
+    EditAction act = std::move(redoStack_.back());
+    redoStack_.pop_back();
+
+    if (act.type == EditAction::Type::Insert)
+    {
+        // reapply insert
+        int pos = act.pos;
+        content.insert((size_t)pos, act.text);
+        // push back to undo
+        undoStack_.push_back(act);
+        cursorIndex = pos + (int)act.text.size();
+    }
+    else if (act.type == EditAction::Type::Erase)
+    {
+        // reapply erase
+        int pos = act.pos;
+        int len = (int)act.text.size();
+        content.erase((size_t)pos, (size_t)len);
+        undoStack_.push_back(act);
+        cursorIndex = pos;
+    }
+
+    selectionStart = selectionEnd = -1;
+    onTextChanged();
+    caretFollow = true;
 }
 
 // Selection helpers
@@ -282,10 +317,12 @@ void TextEditor::deleteSelection()
 
     int selMin = std::min(selectionStart, selectionEnd);
     int selMax = std::max(selectionStart, selectionEnd);
+    int len = selMax - selMin;
 
-    content.erase(selMin, selMax - selMin);
-    cursorIndex = selMin;
-    selectionStart = selectionEnd = -1;
+    // use applyErase to record undo
+    applyErase(selMin, len);
+
+    // applyErase already sets cursorIndex, selection and onTextChanged
 }
 
 void TextEditor::copySelection()
@@ -305,7 +342,7 @@ void TextEditor::cutSelection()
 
     copySelection();
     deleteSelection();
-    onTextChanged();
+    // applyErase called by deleteSelection already invoked onTextChanged
     caretFollow = true;
 }
 
@@ -318,13 +355,10 @@ void TextEditor::pasteFromClipboard()
     if (hasSelection())
     {
         deleteSelection();
-        onTextChanged();
+        // deleteSelection already recorded the erase
     }
 
-    content.insert(cursorIndex, clipText);
-    cursorIndex += strlen(clipText);
-    onTextChanged();
-    caretFollow = true;
+    applyInsert(cursorIndex, clipText);
     addOutput(icons["checkmark"], "Pasted text");
 }
 
