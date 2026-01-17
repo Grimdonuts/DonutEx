@@ -1,22 +1,20 @@
-// FileOperations.hpp
 #pragma once
 
 #include <string>
 
 class TextEditor;
 
-class FileOperations
-{
+class FileOperations {
 public:
-    FileOperations(TextEditor* editor);
-    ~FileOperations() = default;
-    
-    void openFile(const std::string& fname);
-    void newFile();
-    void saveFile();
-    void showOpenDialog();
-    void showSaveDialog(const std::string& defaultFileName);
-    
+  FileOperations(TextEditor *editor);
+  ~FileOperations() = default;
+
+  void openFile(const std::string &fname);
+  void newFile();
+  void saveFile();
+  void showOpenDialog();
+  void showSaveDialog(const std::string &defaultFileName);
+
 private:
-    TextEditor* editor_;
+  TextEditor *editor_;
 };
