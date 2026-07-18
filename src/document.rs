@@ -1,6 +1,7 @@
-use crate::syntax::Language;
+use crate::syntax::{Language, Token};
 use ropey::Rope;
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Clone)]
 enum EditAction {
@@ -46,6 +47,22 @@ pub struct Document {
 
     undo_stack: Vec<EditAction>,
     redo_stack: Vec<EditAction>,
+
+    /// Bumped on every edit/undo/redo; the LSP sync + semantic-tokens
+    /// pipeline in `app.rs` uses this to know when a re-sync is needed and
+    /// to discard a semantic-tokens response that arrived for a version
+    /// that's since been edited past.
+    pub version: i32,
+    /// Version last sent to the language server via didOpen/didChange.
+    /// -1 means "never opened with the LSP".
+    pub lsp_synced_version: i32,
+    /// Per-line semantic tokens from the language server, paired with the
+    /// document version they describe (checked against `version` before
+    /// painting so a stale response never gets drawn over newer text).
+    pub lsp_tokens: Option<(i32, Vec<Vec<Token>>)>,
+    /// Debounce clock for LSP didChange/semanticTokens requests, so we
+    /// don't fire one on every keystroke.
+    pub last_edit_at: Instant,
 }
 
 impl Document {
@@ -70,11 +87,18 @@ impl Document {
             comment_state: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            version: 0,
+            lsp_synced_version: -1,
+            lsp_tokens: None,
+            last_edit_at: Instant::now(),
         }
     }
 
     pub fn from_path(path: PathBuf) -> std::io::Result<Self> {
         let text = std::fs::read_to_string(&path)?;
+        // Canonicalize so LSP file:// URIs (and tab-dedup path comparisons)
+        // are always absolute, even when opened via a relative CLI arg.
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
         let rope = Rope::from_str(&text);
         let max_w = rope.lines().map(|l| l.len_chars()).max().unwrap_or(0);
         let display_name = path
@@ -98,6 +122,10 @@ impl Document {
             comment_state: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            version: 0,
+            lsp_synced_version: -1,
+            lsp_tokens: None,
+            last_edit_at: Instant::now(),
         })
     }
 
@@ -111,6 +139,7 @@ impl Document {
 
     pub fn save_as(&mut self, path: PathBuf) -> std::io::Result<()> {
         std::fs::write(&path, self.rope.to_string())?;
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
         self.display_name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -118,6 +147,8 @@ impl Document {
         self.language = Language::from_path(Some(path.as_path()));
         self.path = Some(path);
         self.dirty = false;
+        self.lsp_synced_version = -1;
+        self.lsp_tokens = None;
         Ok(())
     }
 
@@ -169,6 +200,8 @@ impl Document {
         self.redo_stack.clear();
         self.dirty = true;
         self.comment_state = None;
+        self.version += 1;
+        self.last_edit_at = Instant::now();
     }
 
     pub fn insert(&mut self, pos: usize, text: &str) {
@@ -252,6 +285,8 @@ impl Document {
         self.redo_stack.push(action);
         self.dirty = true;
         self.comment_state = None;
+        self.version += 1;
+        self.last_edit_at = Instant::now();
     }
 
     pub fn redo(&mut self) {
@@ -273,6 +308,8 @@ impl Document {
         self.undo_stack.push(action);
         self.dirty = true;
         self.comment_state = None;
+        self.version += 1;
+        self.last_edit_at = Instant::now();
     }
 
     /// Returns whether `line` starts inside an unterminated block comment,
@@ -286,6 +323,22 @@ impl Document {
             .as_ref()
             .and_then(|v| v.get(line).copied())
             .unwrap_or(false)
+    }
+
+    /// Char offset -> LSP `(line, character)`, where `character` is a
+    /// UTF-16 code-unit offset into the line as the protocol requires.
+    pub fn char_to_lsp_line_col(&self, idx: usize) -> (u32, u32) {
+        let (line, col) = self.char_to_line_col(idx);
+        let line_text = self.line_text(line);
+        let utf16_col = crate::lsp::char_offset_to_utf16_offset(&line_text, col);
+        (line as u32, utf16_col as u32)
+    }
+
+    /// The inverse of `char_to_lsp_line_col`.
+    pub fn lsp_line_col_to_char(&self, line: u32, utf16_character: u32) -> usize {
+        let line_text = self.line_text(line as usize);
+        let col = crate::lsp::utf16_offset_to_char_offset(&line_text, utf16_character as usize);
+        self.line_col_to_char(line as usize, col)
     }
 
     fn rebuild_comment_state(&mut self) {

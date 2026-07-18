@@ -3,6 +3,7 @@ mod console;
 mod document;
 mod editor_view;
 mod explorer;
+mod lsp;
 mod plugins;
 mod syntax;
 mod theme;

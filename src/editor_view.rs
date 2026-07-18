@@ -25,6 +25,14 @@ impl EditorMetrics {
     }
 }
 
+/// What happened this frame that the caller (app.rs) needs to act on beyond
+/// just repainting - currently only a ctrl+click asking to jump to a
+/// definition, carried as the char offset that was clicked.
+pub struct EditorOutcome {
+    pub response: egui::Response,
+    pub goto_definition: Option<usize>,
+}
+
 /// Renders one open document as a virtualized monospace grid: only the rows
 /// intersecting the viewport are laid out and painted, so editor cost stays
 /// proportional to screen size rather than file size.
@@ -34,7 +42,7 @@ pub fn show(
     metrics: &EditorMetrics,
     clipboard: &mut arboard::Clipboard,
     focused: bool,
-) -> egui::Response {
+) -> EditorOutcome {
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(avail, Sense::click_and_drag());
 
@@ -102,6 +110,7 @@ pub fn show(
         doc.drag_target = DragTarget::None;
     }
 
+    let mut goto_definition: Option<usize> = None;
     if let Some(pos) = response.interact_pointer_pos() {
         match doc.drag_target {
             DragTarget::Text => {
@@ -113,16 +122,25 @@ pub fn show(
                 let idx = doc.line_col_to_char(row, col);
 
                 if pointer_pressed {
-                    let old_cursor = doc.cursor;
-                    doc.cursor = idx;
-                    if ui.input(|i| i.modifiers.shift) {
-                        if doc.selection_anchor.is_none() {
-                            doc.selection_anchor = Some(old_cursor);
-                        }
+                    let ctrl = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                    if ctrl {
+                        // Ctrl+click asks for "go to definition" rather than
+                        // placing the cursor - don't disturb selection/drag
+                        // state, just surface the click position.
+                        goto_definition = Some(idx);
+                        doc.drag_target = DragTarget::None;
                     } else {
-                        doc.selection_anchor = None;
+                        let old_cursor = doc.cursor;
+                        doc.cursor = idx;
+                        if ui.input(|i| i.modifiers.shift) {
+                            if doc.selection_anchor.is_none() {
+                                doc.selection_anchor = Some(old_cursor);
+                            }
+                        } else {
+                            doc.selection_anchor = None;
+                        }
+                        doc.drag_anchor = Some(idx);
                     }
-                    doc.drag_anchor = Some(idx);
                 } else if pointer_down {
                     if doc.selection_anchor.is_none() {
                         doc.selection_anchor = doc.drag_anchor.or(Some(doc.cursor));
@@ -225,8 +243,27 @@ pub fn show(
             // whole line and then a colored overlay on top - two separate
             // draws of the same glyphs at the same position don't rasterize
             // pixel-identically and show up as a faint double-struck "ghost".
-            let starts_in_comment = doc.line_starts_in_block_comment(row);
-            let (tokens, _) = syntax::tokenize_line(&line, lang, starts_in_comment);
+            // Prefer the language server's semantic tokens when we have a
+            // fresh set for this exact document version; otherwise fall
+            // back to the regex tokenizer (also what covers languages with
+            // no LSP server running).
+            let lsp_fresh = doc
+                .lsp_tokens
+                .as_ref()
+                .map(|(v, _)| *v == doc.version)
+                .unwrap_or(false);
+            let tokens: Vec<syntax::Token> = if lsp_fresh {
+                doc.lsp_tokens
+                    .as_ref()
+                    .unwrap()
+                    .1
+                    .get(row)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                let starts_in_comment = doc.line_starts_in_block_comment(row);
+                syntax::tokenize_line(&line, lang, starts_in_comment).0
+            };
             let chars: Vec<char> = line.chars().collect();
             let mut cursor = 0usize;
             let draw_segment = |from: usize, to: usize, color: Color32| {
@@ -262,6 +299,46 @@ pub fn show(
     }
 
     let hover_pos = ui.input(|i| i.pointer.hover_pos());
+
+    // Ctrl-hover affordance: underline the identifier under the pointer and
+    // switch to a pointing-hand cursor, like the ctrl+click-to-definition
+    // hint other editors show.
+    let ctrl_held = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+    if ctrl_held {
+        if let Some(pos) = hover_pos {
+            if content_rect.contains(pos) {
+                let local_y = (pos.y - content_rect.min.y).max(0.0);
+                let row =
+                    (first_row + (local_y / row_h) as usize).min(total_rows.saturating_sub(1));
+                let col_f = (pos.x - text_x0) / char_w;
+                if col_f >= 0.0 {
+                    let col = col_f.floor() as usize;
+                    let line = doc.line_text(row);
+                    let chars: Vec<char> = line.chars().collect();
+                    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+                    if col < chars.len() && is_word(chars[col]) {
+                        let mut start = col;
+                        while start > 0 && is_word(chars[start - 1]) {
+                            start -= 1;
+                        }
+                        let mut end = col;
+                        while end < chars.len() && is_word(chars[end]) {
+                            end += 1;
+                        }
+                        let y = content_rect.min.y + ((row - first_row) as f32) * row_h;
+                        let x0 = text_x0 + start as f32 * char_w;
+                        let x1 = text_x0 + end as f32 * char_w;
+                        painter.line_segment(
+                            [Pos2::new(x0, y + row_h - 2.0), Pos2::new(x1, y + row_h - 2.0)],
+                            Stroke::new(1.0_f32, text_color),
+                        );
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    }
+                }
+            }
+        }
+    }
+
     draw_scrollbars(
         &painter,
         rect,
@@ -278,7 +355,10 @@ pub fn show(
         &sb_colors,
     );
 
-    response
+    EditorOutcome {
+        response,
+        goto_definition,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

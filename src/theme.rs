@@ -14,6 +14,12 @@ pub fn token_color(kind: TokenKind) -> Option<Color32> {
         TokenKind::Comment => Some(Color32::from_rgb(106, 153, 85)),
         TokenKind::Function => Some(Color32::from_rgb(220, 220, 170)),
         TokenKind::Macro => Some(Color32::from_rgb(197, 134, 192)),
+        TokenKind::Variable => Some(Color32::from_rgb(156, 220, 254)),
+        TokenKind::Parameter => Some(Color32::from_rgb(156, 220, 254)),
+        TokenKind::Property => Some(Color32::from_rgb(156, 220, 254)),
+        TokenKind::Namespace => Some(Color32::from_rgb(78, 201, 176)),
+        TokenKind::EnumMember => Some(Color32::from_rgb(78, 201, 176)),
+        TokenKind::Decorator => Some(Color32::from_rgb(220, 220, 170)),
     }
 }
 

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Language {
     Rust,
     C,
@@ -44,8 +44,17 @@ pub enum TokenKind {
     Comment,
     Function,
     Macro,
+    // The remaining variants are only ever produced by LSP semantic tokens -
+    // the regex tokenizer below can't distinguish them from Plain/Type.
+    Variable,
+    Parameter,
+    Property,
+    Namespace,
+    EnumMember,
+    Decorator,
 }
 
+#[derive(Clone, Copy)]
 pub struct Token {
     pub kind: TokenKind,
     pub start: usize, // char offset into the line

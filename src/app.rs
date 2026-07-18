@@ -2,10 +2,12 @@ use crate::console;
 use crate::document::Document;
 use crate::editor_view::{self, EditorMetrics};
 use crate::explorer::{self, FileNode};
+use crate::lsp::{LspEvent, LspManager};
 use crate::plugins::{PluginEngine, PluginMessage};
 use crate::theme;
 use eframe::egui;
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub struct App {
     documents: Vec<Document>,
@@ -22,6 +24,8 @@ pub struct App {
 
     plugins: PluginEngine,
     plugins_dir: PathBuf,
+
+    lsp: LspManager,
 
     metrics: Option<EditorMetrics>,
     clipboard: arboard::Clipboard,
@@ -48,6 +52,8 @@ impl App {
             }
         }
 
+        let lsp = LspManager::new(project_root.clone());
+
         Self {
             documents,
             active: 0,
@@ -59,6 +65,7 @@ impl App {
             console_lines,
             plugins,
             plugins_dir,
+            lsp,
             metrics: None,
             clipboard: arboard::Clipboard::new().expect("open system clipboard"),
             editor_focused: true,
@@ -135,6 +142,12 @@ impl App {
     }
 
     fn close_tab(&mut self, idx: usize) {
+        let doc = &self.documents[idx];
+        if doc.lsp_synced_version != -1 {
+            if let Some(path) = doc.path.clone() {
+                self.lsp.did_close(&path, doc.language);
+            }
+        }
         if self.documents.len() == 1 {
             self.documents[0] = Document::new_untitled(self.untitled_counter);
             self.untitled_counter += 1;
@@ -165,6 +178,65 @@ impl App {
         for msg in self.plugins.drain_messages() {
             match msg {
                 PluginMessage::Output(s) => self.console_lines.push(s),
+            }
+        }
+    }
+
+    /// Keeps the active document's language server in sync: sends
+    /// didOpen/didChange when the buffer has edits the server hasn't seen
+    /// yet, then asks for a fresh set of semantic tokens. Debounced against
+    /// `last_edit_at` so a burst of keystrokes doesn't fire a request per
+    /// character. Only the active document is synced/tokenized - background
+    /// tabs aren't painted, so there's nothing to color for them yet.
+    fn sync_active_doc_with_lsp(&mut self) {
+        let idx = self.active;
+        let doc = &self.documents[idx];
+        let Some(path) = doc.path.clone() else { return };
+        if doc.version == doc.lsp_synced_version {
+            return;
+        }
+        if doc.last_edit_at.elapsed() < Duration::from_millis(150) {
+            return;
+        }
+        let lang = doc.language;
+        let version = doc.version;
+        let text = doc.rope.to_string();
+        let lines: Vec<String> = (0..doc.line_count()).map(|l| doc.line_text(l)).collect();
+
+        if doc.lsp_synced_version == -1 {
+            self.lsp.did_open(&path, lang, &text, version);
+        } else {
+            self.lsp.did_change(&path, lang, &text, version);
+        }
+        self.lsp.request_semantic_tokens(&path, lang, version, lines);
+        self.documents[idx].lsp_synced_version = version;
+    }
+
+    fn drain_lsp_events(&mut self) {
+        for event in self.lsp.poll() {
+            match event {
+                LspEvent::SemanticTokens { doc, version, by_line } => {
+                    if let Some(d) = self
+                        .documents
+                        .iter_mut()
+                        .find(|d| d.path.as_deref() == Some(doc.as_path()))
+                    {
+                        if d.version == version {
+                            d.lsp_tokens = Some((version, by_line));
+                        }
+                    }
+                }
+                LspEvent::Definition { locations } => {
+                    if let Some((path, line, character)) = locations.into_iter().next() {
+                        self.open_path(path);
+                        let doc = &mut self.documents[self.active];
+                        doc.cursor = doc.lsp_line_col_to_char(line, character);
+                        doc.selection_anchor = None;
+                        doc.scroll_offset = (line as f32 - 5.0).max(0.0);
+                        self.editor_focused = true;
+                    }
+                }
+                LspEvent::Log(s) => self.console_lines.push(format!("[lsp] {}", s)),
             }
         }
     }
@@ -319,20 +391,29 @@ impl eframe::App for App {
                 });
 
             let metrics = self.metrics.as_ref().unwrap();
-            let response = editor_view::show(
+            let outcome = editor_view::show(
                 ui,
                 &mut self.documents[self.active],
                 metrics,
                 &mut self.clipboard,
                 self.editor_focused,
             );
-            if response.clicked() || response.dragged() {
+            if outcome.response.clicked() || outcome.response.dragged() {
                 self.editor_focused = true;
+            }
+            if let Some(offset) = outcome.goto_definition {
+                let doc = &self.documents[self.active];
+                if let Some(path) = doc.path.clone() {
+                    let (line, character) = doc.char_to_lsp_line_col(offset);
+                    self.lsp.request_definition(&path, doc.language, line, character);
+                }
             }
         });
 
         self.plugins.run_hook("on_render");
         self.drain_plugin_messages();
+        self.sync_active_doc_with_lsp();
+        self.drain_lsp_events();
 
         // Editor content changes constantly while typing; keep redrawing so
         // the caret/scroll stay responsive without waiting on OS events.
