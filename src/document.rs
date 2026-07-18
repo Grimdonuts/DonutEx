@@ -1,3 +1,4 @@
+use crate::syntax::Language;
 use ropey::Rope;
 use std::path::PathBuf;
 
@@ -7,20 +8,41 @@ enum EditAction {
     Erase { pos: usize, text: String },
 }
 
+/// What an in-progress mouse drag is manipulating, decided at press time and
+/// held for the duration of the drag so the pointer wandering over another
+/// region (e.g. off the scrollbar) mid-drag doesn't change its meaning.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DragTarget {
+    None,
+    Text,
+    VScroll,
+    HScroll,
+}
+
 /// A single open file: its text buffer, cursor/selection state, and undo history.
 pub struct Document {
     pub path: Option<PathBuf>,
     pub display_name: String,
     pub rope: Rope,
     pub dirty: bool,
+    pub language: Language,
 
     pub cursor: usize,           // char offset into rope
     pub selection_anchor: Option<usize>, // other end of selection, if any
     pub drag_anchor: Option<usize>, // transient: press position for an in-progress mouse drag
+    pub drag_target: DragTarget,
 
     pub scroll_offset: f32,      // vertical scroll, in rows
     pub h_scroll_offset: f32,    // horizontal scroll, in pixels
     pub max_line_width_ch: usize,
+
+    // Cache of "does line N start inside an unterminated block comment",
+    // used so syntax highlighting only has to look at the lines actually
+    // being painted instead of rescanning from the top of the file every
+    // frame. Invalidated (set to None) on any edit; lazily rebuilt in
+    // `ensure_comment_state`, which costs O(file length) but only runs once
+    // per edit rather than once per frame.
+    comment_state: Option<Vec<bool>>,
 
     undo_stack: Vec<EditAction>,
     redo_stack: Vec<EditAction>,
@@ -37,12 +59,15 @@ impl Document {
             },
             rope: Rope::new(),
             dirty: false,
+            language: Language::PlainText,
             cursor: 0,
             selection_anchor: None,
             drag_anchor: None,
+            drag_target: DragTarget::None,
             scroll_offset: 0.0,
             h_scroll_offset: 0.0,
             max_line_width_ch: 0,
+            comment_state: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
@@ -56,17 +81,21 @@ impl Document {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
+        let language = Language::from_path(Some(path.as_path()));
         Ok(Self {
             path: Some(path),
             display_name,
             rope,
             dirty: false,
+            language,
             cursor: 0,
             selection_anchor: None,
             drag_anchor: None,
+            drag_target: DragTarget::None,
             scroll_offset: 0.0,
             h_scroll_offset: 0.0,
             max_line_width_ch: max_w,
+            comment_state: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         })
@@ -86,6 +115,7 @@ impl Document {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
+        self.language = Language::from_path(Some(path.as_path()));
         self.path = Some(path);
         self.dirty = false;
         Ok(())
@@ -138,6 +168,7 @@ impl Document {
         self.undo_stack.push(action);
         self.redo_stack.clear();
         self.dirty = true;
+        self.comment_state = None;
     }
 
     pub fn insert(&mut self, pos: usize, text: &str) {
@@ -220,6 +251,7 @@ impl Document {
         self.selection_anchor = None;
         self.redo_stack.push(action);
         self.dirty = true;
+        self.comment_state = None;
     }
 
     pub fn redo(&mut self) {
@@ -240,5 +272,33 @@ impl Document {
         self.selection_anchor = None;
         self.undo_stack.push(action);
         self.dirty = true;
+        self.comment_state = None;
+    }
+
+    /// Returns whether `line` starts inside an unterminated block comment,
+    /// rebuilding the whole-file cache first if it was invalidated by an
+    /// edit since the last call.
+    pub fn line_starts_in_block_comment(&mut self, line: usize) -> bool {
+        if self.comment_state.is_none() {
+            self.rebuild_comment_state();
+        }
+        self.comment_state
+            .as_ref()
+            .and_then(|v| v.get(line).copied())
+            .unwrap_or(false)
+    }
+
+    fn rebuild_comment_state(&mut self) {
+        let total = self.line_count();
+        let mut states = Vec::with_capacity(total);
+        let mut in_block = false;
+        for line in 0..total {
+            states.push(in_block);
+            let text = self.line_text(line);
+            let (_tokens, ends_in_block) =
+                crate::syntax::tokenize_line(&text, self.language, in_block);
+            in_block = ends_in_block;
+        }
+        self.comment_state = Some(states);
     }
 }

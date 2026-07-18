@@ -29,7 +29,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
         theme::apply(&cc.egui_ctx);
 
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -40,8 +40,16 @@ impl App {
         let mut console_lines = plugins.reload(&plugins_dir);
         console_lines.insert(0, "DonutEx starting up.".to_string());
 
+        let mut documents = vec![Document::new_untitled(0)];
+        if let Some(path) = initial_file {
+            match Document::from_path(path.clone()) {
+                Ok(doc) => documents = vec![doc],
+                Err(e) => console_lines.push(format!("failed to open {}: {}", path.display(), e)),
+            }
+        }
+
         Self {
-            documents: vec![Document::new_untitled(0)],
+            documents,
             active: 0,
             untitled_counter: 1,
             show_explorer: true,

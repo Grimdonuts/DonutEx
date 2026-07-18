@@ -1,5 +1,9 @@
-use crate::document::Document;
-use eframe::egui::{self, Align2, FontId, Key, Pos2, Rect, Sense, Stroke};
+use crate::document::{DragTarget, Document};
+use crate::syntax;
+use crate::theme;
+use eframe::egui::{self, Align2, Color32, FontId, Key, Pos2, Rect, Sense, Stroke};
+
+const SCROLLBAR_THICKNESS: f32 = 12.0;
 
 pub struct EditorMetrics {
     pub font_id: FontId,
@@ -40,23 +44,34 @@ pub fn show(
     let gutter_color = visuals.weak_text_color();
     let selection_color = visuals.selection.bg_fill;
     let caret_color = visuals.strong_text_color();
+    let scrollbar_track_color = visuals.faint_bg_color;
+    let scrollbar_thumb_color = visuals.widgets.inactive.bg_fill;
+    let scrollbar_thumb_active_color = visuals.widgets.hovered.bg_fill;
 
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, bg);
 
-    let total_rows = doc.line_count().max(1);
-    let digits = total_rows.to_string().len().max(3);
-    let gutter_w = metrics.char_w * (digits as f32 + 2.0);
-    let text_x0 = rect.min.x + gutter_w - doc.h_scroll_offset;
-
     let row_h = metrics.row_h;
     let char_w = metrics.char_w;
 
-    let visible_rows = (rect.height() / row_h).ceil() as usize + 1;
-    let first_row = (doc.scroll_offset as usize).min(total_rows.saturating_sub(1));
-    let last_row = (first_row + visible_rows).min(total_rows);
+    let total_rows = doc.line_count().max(1);
+    let digits = total_rows.to_string().len().max(3);
+    let gutter_w = metrics.char_w * (digits as f32 + 2.0);
 
-    // --- scrolling ---
+    // Reserve fixed strips on the right/bottom for the scrollbars so their
+    // hit-test regions never overlap the text's click/drag region.
+    let content_w = (rect.width() - SCROLLBAR_THICKNESS).max(0.0);
+    let content_h = (rect.height() - SCROLLBAR_THICKNESS).max(0.0);
+    let content_rect = Rect::from_min_size(rect.min, egui::vec2(content_w, content_h));
+
+    let text_x0 = content_rect.min.x + gutter_w - doc.h_scroll_offset;
+    let text_view_w = (content_w - gutter_w).max(1.0);
+    let full_content_w = doc.max_line_width_ch as f32 * char_w;
+
+    let visible_rows = (content_h / row_h).ceil().max(1.0) as usize + 1;
+    let first_row = (doc.scroll_offset as usize).min(total_rows.saturating_sub(1));
+
+    // --- scrolling (wheel) ---
     if response.hovered() {
         let scroll = ui.input(|i| i.smooth_scroll_delta);
         if scroll.y != 0.0 {
@@ -64,37 +79,71 @@ pub fn show(
             doc.scroll_offset = (doc.scroll_offset - scroll.y / row_h).clamp(0.0, max_scroll);
         }
         if scroll.x != 0.0 {
-            let max_w = (doc.max_line_width_ch as f32 * char_w - rect.width() + gutter_w).max(0.0);
+            let max_w = (full_content_w - text_view_w).max(0.0);
             doc.h_scroll_offset = (doc.h_scroll_offset - scroll.x).clamp(0.0, max_w);
         }
     }
 
-    // --- mouse cursor placement / selection drag ---
+    // --- mouse: decide what an in-progress drag targets, at press time ---
     let pointer_pressed = response.hovered() && ui.input(|i| i.pointer.primary_pressed());
     let pointer_down = ui.input(|i| i.pointer.primary_down());
-    if let Some(pos) = response.interact_pointer_pos() {
-        let local_y = (pos.y - rect.min.y).max(0.0);
-        let row = (first_row + (local_y / row_h) as usize).min(total_rows.saturating_sub(1));
-        let col_f = (pos.x - text_x0) / char_w;
-        let col = col_f.round().max(0.0) as usize;
-        let idx = doc.line_col_to_char(row, col);
-
-        if pointer_pressed {
-            let old_cursor = doc.cursor;
-            doc.cursor = idx;
-            if ui.input(|i| i.modifiers.shift) {
-                if doc.selection_anchor.is_none() {
-                    doc.selection_anchor = Some(old_cursor);
-                }
+    if pointer_pressed {
+        if let Some(pos) = response.interact_pointer_pos() {
+            doc.drag_target = if pos.x >= content_rect.max.x {
+                DragTarget::VScroll
+            } else if pos.y >= content_rect.max.y {
+                DragTarget::HScroll
             } else {
-                doc.selection_anchor = None;
+                DragTarget::Text
+            };
+        }
+    }
+    if !pointer_down {
+        doc.drag_target = DragTarget::None;
+    }
+
+    if let Some(pos) = response.interact_pointer_pos() {
+        match doc.drag_target {
+            DragTarget::Text => {
+                let local_y = (pos.y - content_rect.min.y).max(0.0);
+                let row =
+                    (first_row + (local_y / row_h) as usize).min(total_rows.saturating_sub(1));
+                let col_f = (pos.x - text_x0) / char_w;
+                let col = col_f.round().max(0.0) as usize;
+                let idx = doc.line_col_to_char(row, col);
+
+                if pointer_pressed {
+                    let old_cursor = doc.cursor;
+                    doc.cursor = idx;
+                    if ui.input(|i| i.modifiers.shift) {
+                        if doc.selection_anchor.is_none() {
+                            doc.selection_anchor = Some(old_cursor);
+                        }
+                    } else {
+                        doc.selection_anchor = None;
+                    }
+                    doc.drag_anchor = Some(idx);
+                } else if pointer_down {
+                    if doc.selection_anchor.is_none() {
+                        doc.selection_anchor = doc.drag_anchor.or(Some(doc.cursor));
+                    }
+                    doc.cursor = idx;
+                }
             }
-            doc.drag_anchor = Some(idx);
-        } else if pointer_down && response.dragged() {
-            if doc.selection_anchor.is_none() {
-                doc.selection_anchor = doc.drag_anchor.or(Some(doc.cursor));
+            DragTarget::VScroll => {
+                let track_h = content_rect.height().max(1.0);
+                let scrollable_rows = (total_rows as f32 - visible_rows as f32).max(1.0);
+                let frac = ((pos.y - content_rect.min.y) / track_h).clamp(0.0, 1.0);
+                doc.scroll_offset = frac * scrollable_rows;
             }
-            doc.cursor = idx;
+            DragTarget::HScroll => {
+                let track_x0 = content_rect.min.x + gutter_w;
+                let track_w = (content_rect.width() - gutter_w).max(1.0);
+                let scrollable_w = (full_content_w - text_view_w).max(0.0);
+                let frac = ((pos.x - track_x0) / track_w).clamp(0.0, 1.0);
+                doc.h_scroll_offset = frac * scrollable_w;
+            }
+            DragTarget::None => {}
         }
     }
 
@@ -103,7 +152,8 @@ pub fn show(
         handle_keyboard(ui, doc, clipboard);
     }
 
-    // keep cursor within view
+    // keep cursor within view (recompute after any edits/navigation above)
+    let total_rows = doc.line_count().max(1);
     let (cur_line, _) = doc.char_to_line_col(doc.cursor);
     if (cur_line as f32) < doc.scroll_offset {
         doc.scroll_offset = cur_line as f32;
@@ -111,13 +161,16 @@ pub fn show(
         doc.scroll_offset = (cur_line as f32) - visible_rows as f32 + 2.0;
     }
     doc.scroll_offset = doc.scroll_offset.max(0.0);
+    let first_row = (doc.scroll_offset as usize).min(total_rows.saturating_sub(1));
+    let last_row = (first_row + visible_rows).min(total_rows);
 
     // --- paint rows ---
     let selection = doc.selection_range();
+    let lang = doc.language;
     for row in first_row..last_row {
-        let y = rect.min.y + ((row - first_row) as f32) * row_h;
+        let y = content_rect.min.y + ((row - first_row) as f32) * row_h;
         painter.text(
-            Pos2::new(rect.min.x + gutter_w - char_w, y),
+            Pos2::new(content_rect.min.x + gutter_w - char_w, y),
             Align2::RIGHT_TOP,
             (row + 1).to_string(),
             metrics.font_id.clone(),
@@ -160,13 +213,35 @@ pub fn show(
         }
 
         if !line.is_empty() {
-            painter.text(
-                Pos2::new(text_x0, y),
-                Align2::LEFT_TOP,
-                &line,
-                metrics.font_id.clone(),
-                text_color,
-            );
+            // Paint the line as non-overlapping colored segments (tokens plus
+            // the plain-colored gaps between them) rather than drawing the
+            // whole line and then a colored overlay on top - two separate
+            // draws of the same glyphs at the same position don't rasterize
+            // pixel-identically and show up as a faint double-struck "ghost".
+            let starts_in_comment = doc.line_starts_in_block_comment(row);
+            let (tokens, _) = syntax::tokenize_line(&line, lang, starts_in_comment);
+            let chars: Vec<char> = line.chars().collect();
+            let mut cursor = 0usize;
+            let draw_segment = |from: usize, to: usize, color: Color32| {
+                if to <= from {
+                    return;
+                }
+                let substr: String = chars[from..to].iter().collect();
+                painter.text(
+                    Pos2::new(text_x0 + from as f32 * char_w, y),
+                    Align2::LEFT_TOP,
+                    substr,
+                    metrics.font_id.clone(),
+                    color,
+                );
+            };
+            for tok in &tokens {
+                draw_segment(cursor, tok.start, text_color);
+                let color = theme::token_color(tok.kind).unwrap_or(text_color);
+                draw_segment(tok.start, tok.end, color);
+                cursor = tok.end;
+            }
+            draw_segment(cursor, chars.len(), text_color);
         }
 
         if focused && cur_line == row {
@@ -179,7 +254,94 @@ pub fn show(
         }
     }
 
+    draw_scrollbars(
+        &painter,
+        rect,
+        content_rect,
+        gutter_w,
+        total_rows,
+        visible_rows,
+        doc.scroll_offset,
+        full_content_w,
+        text_view_w,
+        doc.h_scroll_offset,
+        doc.drag_target,
+        scrollbar_track_color,
+        scrollbar_thumb_color,
+        scrollbar_thumb_active_color,
+    );
+
     response
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_scrollbars(
+    painter: &egui::Painter,
+    rect: Rect,
+    content_rect: Rect,
+    gutter_w: f32,
+    total_rows: usize,
+    visible_rows: usize,
+    scroll_offset: f32,
+    full_content_w: f32,
+    text_view_w: f32,
+    h_scroll_offset: f32,
+    drag_target: DragTarget,
+    track_color: Color32,
+    thumb_color: Color32,
+    thumb_active_color: Color32,
+) {
+    const MIN_THUMB: f32 = 24.0;
+
+    // Vertical
+    let v_track = Rect::from_min_max(
+        Pos2::new(content_rect.max.x, rect.min.y),
+        Pos2::new(rect.max.x, content_rect.max.y),
+    );
+    painter.rect_filled(v_track, 0.0, track_color);
+    if total_rows > visible_rows {
+        let scrollable_rows = (total_rows as f32 - visible_rows as f32).max(1.0);
+        let thumb_h = (v_track.height() * (visible_rows as f32 / total_rows as f32))
+            .max(MIN_THUMB)
+            .min(v_track.height());
+        let travel = (v_track.height() - thumb_h).max(0.0);
+        let thumb_y = v_track.min.y + (scroll_offset / scrollable_rows).clamp(0.0, 1.0) * travel;
+        let thumb_rect = Rect::from_min_size(
+            Pos2::new(v_track.min.x + 2.0, thumb_y),
+            egui::vec2(v_track.width() - 4.0, thumb_h),
+        );
+        let color = if drag_target == DragTarget::VScroll {
+            thumb_active_color
+        } else {
+            thumb_color
+        };
+        painter.rect_filled(thumb_rect, 3.0, color);
+    }
+
+    // Horizontal
+    let h_track = Rect::from_min_max(
+        Pos2::new(content_rect.min.x + gutter_w, content_rect.max.y),
+        Pos2::new(content_rect.max.x, rect.max.y),
+    );
+    painter.rect_filled(h_track, 0.0, track_color);
+    if full_content_w > text_view_w {
+        let thumb_w = (h_track.width() * (text_view_w / full_content_w))
+            .max(MIN_THUMB)
+            .min(h_track.width());
+        let travel = (h_track.width() - thumb_w).max(0.0);
+        let scrollable_w = (full_content_w - text_view_w).max(1.0);
+        let thumb_x = h_track.min.x + (h_scroll_offset / scrollable_w).clamp(0.0, 1.0) * travel;
+        let thumb_rect = Rect::from_min_size(
+            Pos2::new(thumb_x, h_track.min.y + 2.0),
+            egui::vec2(thumb_w, h_track.height() - 4.0),
+        );
+        let color = if drag_target == DragTarget::HScroll {
+            thumb_active_color
+        } else {
+            thumb_color
+        };
+        painter.rect_filled(thumb_rect, 3.0, color);
+    }
 }
 
 fn handle_keyboard(ui: &mut egui::Ui, doc: &mut Document, clipboard: &mut arboard::Clipboard) {

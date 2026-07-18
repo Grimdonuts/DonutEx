@@ -24,10 +24,21 @@ renderer) is preserved under [`legacy-cpp/`](legacy-cpp/) for reference.
 
 ```sh
 cargo run
+# or open a file directly:
+cargo run -- path/to/file.rs
 ```
 
 Requires a stable Rust toolchain (install via [rustup](https://rustup.rs)
 if you don't have one).
+
+## Syntax highlighting
+
+Lines are tokenized (keywords, types, strings, numbers, comments, macros,
+function calls) and colored per-token as they're painted; language is chosen
+from the file extension (Rust, C/C++, Python, Lua, JS/TS, JSON, TOML, Shell
+supported so far). Multi-line block comments are tracked via a per-document
+cache that's invalidated on edit and lazily rebuilt in one pass over the
+file, rather than rescanned every frame.
 
 ## Plugins
 
@@ -61,6 +72,7 @@ See [`plugins/hello.lua`](plugins/hello.lua) for a minimal example.
 ## Status
 
 Early rewrite. Working: multi-tab editing, undo/redo, selection, clipboard,
-mouse + keyboard navigation, file explorer, console, manual plugin
-hot-reload. Not yet ported from the old prototype: syntax highlighting,
-autocomplete, custom fonts/icons, automatic (file-watching) plugin reload.
+mouse + keyboard navigation, draggable scrollbars, syntax highlighting, file
+explorer, console, manual plugin hot-reload. Not yet ported from the old
+prototype: autocomplete, custom fonts/icons, automatic (file-watching)
+plugin reload.
