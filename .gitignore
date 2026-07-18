@@ -7,3 +7,7 @@ tinyfiledialogs-current
 
 imgui.ini
 build-win/*
+
+# Added by cargo
+
+/target
