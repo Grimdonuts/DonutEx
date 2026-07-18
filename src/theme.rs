@@ -17,6 +17,27 @@ pub fn token_color(kind: TokenKind) -> Option<Color32> {
     }
 }
 
+pub struct ScrollbarColors {
+    pub track: Color32,
+    pub thumb: Color32,
+    pub thumb_hover: Color32,
+    pub thumb_active: Color32,
+}
+
+/// Deliberately its own palette rather than reusing `visuals.widgets.*`:
+/// those are tuned for buttons and, at the values this theme uses for the
+/// rest of the UI, the inactive-widget color and the panel's faint-bg color
+/// are identical - which made the scrollbar thumb invisible against its
+/// track until it was actively being dragged.
+pub fn scrollbar_colors() -> ScrollbarColors {
+    ScrollbarColors {
+        track: Color32::from_rgb(37, 37, 38),
+        thumb: Color32::from_rgb(96, 96, 100),
+        thumb_hover: Color32::from_rgb(122, 122, 128),
+        thumb_active: Color32::from_rgb(28, 122, 191),
+    }
+}
+
 /// A dark palette in the same neighborhood as VS Code's default theme.
 pub fn apply(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();

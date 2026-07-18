@@ -44,9 +44,7 @@ pub fn show(
     let gutter_color = visuals.weak_text_color();
     let selection_color = visuals.selection.bg_fill;
     let caret_color = visuals.strong_text_color();
-    let scrollbar_track_color = visuals.faint_bg_color;
-    let scrollbar_thumb_color = visuals.widgets.inactive.bg_fill;
-    let scrollbar_thumb_active_color = visuals.widgets.hovered.bg_fill;
+    let sb_colors = theme::scrollbar_colors();
 
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, bg);
@@ -83,6 +81,8 @@ pub fn show(
             doc.h_scroll_offset = (doc.h_scroll_offset - scroll.x).clamp(0.0, max_w);
         }
     }
+
+    let cursor_before_input = doc.cursor;
 
     // --- mouse: decide what an in-progress drag targets, at press time ---
     let pointer_pressed = response.hovered() && ui.input(|i| i.pointer.primary_pressed());
@@ -152,15 +152,22 @@ pub fn show(
         handle_keyboard(ui, doc, clipboard);
     }
 
-    // keep cursor within view (recompute after any edits/navigation above)
+    // Keep the cursor within view, but only when something actually moved it
+    // this frame (typing, arrow keys, a click placing it). Wheel-scrolling
+    // and scrollbar dragging never touch doc.cursor, so without this guard
+    // this would immediately snap the view straight back to the cursor's
+    // line on every single frame, making manual scrolling look like it does
+    // nothing.
     let total_rows = doc.line_count().max(1);
     let (cur_line, _) = doc.char_to_line_col(doc.cursor);
-    if (cur_line as f32) < doc.scroll_offset {
-        doc.scroll_offset = cur_line as f32;
-    } else if (cur_line as f32) >= doc.scroll_offset + visible_rows as f32 - 1.0 {
-        doc.scroll_offset = (cur_line as f32) - visible_rows as f32 + 2.0;
+    if doc.cursor != cursor_before_input {
+        if (cur_line as f32) < doc.scroll_offset {
+            doc.scroll_offset = cur_line as f32;
+        } else if (cur_line as f32) >= doc.scroll_offset + visible_rows as f32 - 1.0 {
+            doc.scroll_offset = (cur_line as f32) - visible_rows as f32 + 2.0;
+        }
+        doc.scroll_offset = doc.scroll_offset.max(0.0);
     }
-    doc.scroll_offset = doc.scroll_offset.max(0.0);
     let first_row = (doc.scroll_offset as usize).min(total_rows.saturating_sub(1));
     let last_row = (first_row + visible_rows).min(total_rows);
 
@@ -254,6 +261,7 @@ pub fn show(
         }
     }
 
+    let hover_pos = ui.input(|i| i.pointer.hover_pos());
     draw_scrollbars(
         &painter,
         rect,
@@ -266,9 +274,8 @@ pub fn show(
         text_view_w,
         doc.h_scroll_offset,
         doc.drag_target,
-        scrollbar_track_color,
-        scrollbar_thumb_color,
-        scrollbar_thumb_active_color,
+        hover_pos,
+        &sb_colors,
     );
 
     response
@@ -287,9 +294,8 @@ fn draw_scrollbars(
     text_view_w: f32,
     h_scroll_offset: f32,
     drag_target: DragTarget,
-    track_color: Color32,
-    thumb_color: Color32,
-    thumb_active_color: Color32,
+    hover_pos: Option<Pos2>,
+    colors: &theme::ScrollbarColors,
 ) {
     const MIN_THUMB: f32 = 24.0;
 
@@ -298,7 +304,7 @@ fn draw_scrollbars(
         Pos2::new(content_rect.max.x, rect.min.y),
         Pos2::new(rect.max.x, content_rect.max.y),
     );
-    painter.rect_filled(v_track, 0.0, track_color);
+    painter.rect_filled(v_track, 0.0, colors.track);
     if total_rows > visible_rows {
         let scrollable_rows = (total_rows as f32 - visible_rows as f32).max(1.0);
         let thumb_h = (v_track.height() * (visible_rows as f32 / total_rows as f32))
@@ -310,10 +316,13 @@ fn draw_scrollbars(
             Pos2::new(v_track.min.x + 2.0, thumb_y),
             egui::vec2(v_track.width() - 4.0, thumb_h),
         );
+        let hovering = hover_pos.map(|p| v_track.contains(p)).unwrap_or(false);
         let color = if drag_target == DragTarget::VScroll {
-            thumb_active_color
+            colors.thumb_active
+        } else if hovering {
+            colors.thumb_hover
         } else {
-            thumb_color
+            colors.thumb
         };
         painter.rect_filled(thumb_rect, 3.0, color);
     }
@@ -323,7 +332,7 @@ fn draw_scrollbars(
         Pos2::new(content_rect.min.x + gutter_w, content_rect.max.y),
         Pos2::new(content_rect.max.x, rect.max.y),
     );
-    painter.rect_filled(h_track, 0.0, track_color);
+    painter.rect_filled(h_track, 0.0, colors.track);
     if full_content_w > text_view_w {
         let thumb_w = (h_track.width() * (text_view_w / full_content_w))
             .max(MIN_THUMB)
@@ -335,10 +344,13 @@ fn draw_scrollbars(
             Pos2::new(thumb_x, h_track.min.y + 2.0),
             egui::vec2(thumb_w, h_track.height() - 4.0),
         );
+        let hovering = hover_pos.map(|p| h_track.contains(p)).unwrap_or(false);
         let color = if drag_target == DragTarget::HScroll {
-            thumb_active_color
+            colors.thumb_active
+        } else if hovering {
+            colors.thumb_hover
         } else {
-            thumb_color
+            colors.thumb
         };
         painter.rect_filled(thumb_rect, 3.0, color);
     }
