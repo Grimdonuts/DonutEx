@@ -253,17 +253,22 @@ pub fn show(
                 .as_ref()
                 .map(|(v, _)| *v == doc.version)
                 .unwrap_or(false);
-            let tokens: Vec<syntax::Token> = if lsp_fresh {
-                doc.lsp_tokens
-                    .as_ref()
-                    .unwrap()
-                    .1
-                    .get(row)
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                let starts_in_comment = doc.line_starts_in_block_comment(row);
-                syntax::tokenize_line(&line, lang, starts_in_comment).0
+            let lsp_line_tokens = lsp_fresh
+                .then(|| doc.lsp_tokens.as_ref().unwrap().1.get(row).cloned())
+                .flatten()
+                .filter(|t| !t.is_empty());
+            // Some servers (e.g. clangd on preprocessor lines like #include)
+            // emit no semantic tokens at all for certain lines even once
+            // they're otherwise "fresh" for this doc version. Falling back
+            // to the regex tokenizer per-line (rather than only when there's
+            // no LSP data at all) keeps those lines colored instead of
+            // going blank once the LSP response lands.
+            let tokens: Vec<syntax::Token> = match lsp_line_tokens {
+                Some(t) => t,
+                None => {
+                    let starts_in_comment = doc.line_starts_in_block_comment(row);
+                    syntax::tokenize_line(&line, lang, starts_in_comment).0
+                }
             };
             let chars: Vec<char> = line.chars().collect();
             let mut cursor = 0usize;
