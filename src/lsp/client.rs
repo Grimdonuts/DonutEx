@@ -37,29 +37,44 @@ enum PendingKind {
 /// transport's channel we look the id back up to know how to interpret it.
 pub struct LspClient {
     transport: LspTransport,
+    name: String,
     next_id: i64,
     pending: HashMap<i64, PendingKind>,
     initialized: bool,
+    announced_startup: bool,
     legend: Vec<String>,
     open_docs: HashSet<PathBuf>,
     // (path, language_id, text, version) - buffered until `initialize` completes.
     pending_opens: Vec<(PathBuf, String, String, i32)>,
     // (path, version, lines) - same idea, for semantic-token requests.
     pending_token_requests: Vec<(PathBuf, i32, Vec<String>)>,
+    // (path, line, character) - same idea, for goto-definition requests. A
+    // ctrl+click that lands while the server is still spawning/handshaking
+    // used to be silently dropped instead of queued like the other request
+    // kinds above, which is exactly what made goto-definition look broken
+    // right after opening a file.
+    pending_definition_requests: Vec<(PathBuf, u32, u32)>,
 }
 
 impl LspClient {
     pub fn spawn(cmd: &Path, args: &[&str], root: &Path) -> std::io::Result<Self> {
         let transport = LspTransport::spawn(cmd, args)?;
+        let name = cmd
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| cmd.display().to_string());
         let mut client = Self {
             transport,
+            name,
             next_id: 0,
             pending: HashMap::new(),
             initialized: false,
+            announced_startup: false,
             legend: Vec::new(),
             open_docs: HashSet::new(),
             pending_opens: Vec::new(),
             pending_token_requests: Vec::new(),
+            pending_definition_requests: Vec::new(),
         };
 
         let root_uri = path_to_uri(root).map(|u| u.as_str().to_string());
@@ -189,8 +204,14 @@ impl LspClient {
 
     pub fn request_definition(&mut self, path: &Path, line: u32, character: u32) {
         if !self.initialized {
+            self.pending_definition_requests
+                .push((path.to_path_buf(), line, character));
             return;
         }
+        self.send_definition_request(path, line, character);
+    }
+
+    fn send_definition_request(&mut self, path: &Path, line: u32, character: u32) {
         let Some(uri) = path_to_uri(path) else { return };
         self.request(
             "textDocument/definition",
@@ -206,6 +227,10 @@ impl LspClient {
     /// and turns it into editor-facing events.
     pub fn poll(&mut self) -> Vec<LspEvent> {
         let mut events = Vec::new();
+        if !self.announced_startup {
+            self.announced_startup = true;
+            events.push(LspEvent::Log(format!("starting {}...", self.name)));
+        }
         let messages: Vec<Value> = self.transport.rx.try_iter().collect();
         for msg in messages {
             self.handle_message(msg, &mut events);
@@ -238,7 +263,7 @@ impl LspClient {
         }
         let result = msg.get("result").cloned().unwrap_or(Value::Null);
         match kind {
-            PendingKind::Initialize => self.handle_initialize_result(result),
+            PendingKind::Initialize => self.handle_initialize_result(result, events),
             PendingKind::SemanticTokens { doc, version, lines } => {
                 if result.is_null() {
                     return;
@@ -255,6 +280,10 @@ impl LspClient {
             }
             PendingKind::Definition => {
                 if result.is_null() {
+                    events.push(LspEvent::Log(format!(
+                        "{}: no definition found",
+                        self.name
+                    )));
                     return;
                 }
                 if let Ok(resp) =
@@ -286,7 +315,7 @@ impl LspClient {
         }
     }
 
-    fn handle_initialize_result(&mut self, result: Value) {
+    fn handle_initialize_result(&mut self, result: Value, events: &mut Vec<LspEvent>) {
         if let Ok(init) = serde_json::from_value::<lsp_types::InitializeResult>(result) {
             if let Some(provider) = init.capabilities.semantic_tokens_provider {
                 let legend = match provider {
@@ -306,6 +335,8 @@ impl LspClient {
         }
         self.initialized = true;
         self.notify("initialized", json!({}));
+        events.push(LspEvent::Log(format!("{} ready", self.name)));
+
         let opens = std::mem::take(&mut self.pending_opens);
         for (path, language_id, text, version) in opens {
             self.send_did_open(&path, &language_id, &text, version);
@@ -313,6 +344,10 @@ impl LspClient {
         let token_requests = std::mem::take(&mut self.pending_token_requests);
         for (path, version, lines) in token_requests {
             self.send_semantic_tokens_request(&path, version, lines);
+        }
+        let definition_requests = std::mem::take(&mut self.pending_definition_requests);
+        for (path, line, character) in definition_requests {
+            self.send_definition_request(&path, line, character);
         }
     }
 
