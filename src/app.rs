@@ -25,6 +25,9 @@ pub struct App {
     plugins: PluginEngine,
     plugins_dir: PathBuf,
 
+    themes: Vec<theme::Theme>,
+    current_theme: usize,
+
     lsp: LspManager,
 
     metrics: Option<EditorMetrics>,
@@ -32,10 +35,23 @@ pub struct App {
     editor_focused: bool,
 }
 
+/// Layers plugin-registered themes onto a base list, matched by name: a
+/// plugin theme with the same name as an existing entry (e.g. the built-in
+/// "Dark+") replaces it in place rather than appearing as a duplicate.
+fn merge_themes(base: Vec<theme::Theme>, plugin_themes: Vec<theme::Theme>) -> Vec<theme::Theme> {
+    let mut themes = base;
+    for t in plugin_themes {
+        if let Some(existing) = themes.iter_mut().find(|existing| existing.name == t.name) {
+            *existing = t;
+        } else {
+            themes.push(t);
+        }
+    }
+    themes
+}
+
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
-        theme::apply(&cc.egui_ctx);
-
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let plugins_dir = project_root.join("plugins");
         let file_tree = explorer::build_tree(&project_root);
@@ -43,6 +59,10 @@ impl App {
         let mut plugins = PluginEngine::new();
         let mut console_lines = plugins.reload(&plugins_dir);
         console_lines.insert(0, "DonutEx starting up.".to_string());
+
+        let themes = merge_themes(vec![theme::Theme::built_in_dark()], plugins.take_themes());
+        let current_theme = 0;
+        theme::apply(&cc.egui_ctx, &themes[current_theme]);
 
         let mut documents = vec![Document::new_untitled(0)];
         if let Some(path) = initial_file {
@@ -65,6 +85,8 @@ impl App {
             console_lines,
             plugins,
             plugins_dir,
+            themes,
+            current_theme,
             lsp,
             metrics: None,
             clipboard: arboard::Clipboard::new().expect("open system clipboard"),
@@ -162,12 +184,32 @@ impl App {
         }
     }
 
-    fn reload_plugins(&mut self) {
+    fn reload_plugins(&mut self, ctx: &egui::Context) {
         let log = self.plugins.reload(&self.plugins_dir);
         for line in log {
             self.console_lines.push(line);
         }
+
+        // Preserve the current theme selection by name across the reload
+        // (a theme plugin may have been edited in place), falling back to
+        // the first theme if it was removed.
+        let current_name = self.themes[self.current_theme].name.clone();
+        self.themes = merge_themes(vec![theme::Theme::built_in_dark()], self.plugins.take_themes());
+        self.current_theme = self
+            .themes
+            .iter()
+            .position(|t| t.name == current_name)
+            .unwrap_or(0);
+        theme::apply(ctx, &self.themes[self.current_theme]);
+
         self.console_lines.push("plugins reloaded".to_string());
+    }
+
+    fn switch_theme(&mut self, ctx: &egui::Context, idx: usize) {
+        if idx < self.themes.len() {
+            self.current_theme = idx;
+            theme::apply(ctx, &self.themes[idx]);
+        }
     }
 
     fn refresh_explorer(&mut self) {
@@ -315,10 +357,22 @@ impl eframe::App for App {
                 });
                 ui.menu_button("Plugins", |ui| {
                     if ui.button("Reload Plugins").clicked() {
-                        self.reload_plugins();
+                        self.reload_plugins(ctx);
                         ui.close_menu();
                     }
                     ui.label(format!("{} loaded", self.plugins.loaded_files.len()));
+                });
+                ui.menu_button("Themes", |ui| {
+                    let mut selected = None;
+                    for (i, t) in self.themes.iter().enumerate() {
+                        if ui.radio(i == self.current_theme, &t.name).clicked() {
+                            selected = Some(i);
+                        }
+                    }
+                    if let Some(i) = selected {
+                        self.switch_theme(ctx, i);
+                        ui.close_menu();
+                    }
                 });
             });
         });
@@ -397,6 +451,7 @@ impl eframe::App for App {
                 metrics,
                 &mut self.clipboard,
                 self.editor_focused,
+                &self.themes[self.current_theme],
             );
             if outcome.response.clicked() || outcome.response.dragged() {
                 self.editor_focused = true;

@@ -42,6 +42,7 @@ pub fn show(
     metrics: &EditorMetrics,
     clipboard: &mut arboard::Clipboard,
     focused: bool,
+    theme: &theme::Theme,
 ) -> EditorOutcome {
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(avail, Sense::click_and_drag());
@@ -52,7 +53,7 @@ pub fn show(
     let gutter_color = visuals.weak_text_color();
     let selection_color = visuals.selection.bg_fill;
     let caret_color = visuals.strong_text_color();
-    let sb_colors = theme::scrollbar_colors();
+    let sb_colors = theme::scrollbar_colors(theme);
 
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, bg);
@@ -281,7 +282,7 @@ pub fn show(
             };
             for tok in &tokens {
                 draw_segment(cursor, tok.start, text_color);
-                let color = theme::token_color(tok.kind).unwrap_or(text_color);
+                let color = theme::token_color(theme, tok.kind).unwrap_or(text_color);
                 draw_segment(tok.start, tok.end, color);
                 cursor = tok.end;
             }
