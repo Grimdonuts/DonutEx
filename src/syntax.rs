@@ -54,7 +54,7 @@ pub enum TokenKind {
     Decorator,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Token {
     pub kind: TokenKind,
     pub start: usize, // char offset into the line
@@ -263,6 +263,45 @@ pub fn tokenize_line(
 
         let c = chars[i];
 
+        // C/C++ preprocessor directive: "#include", "#define", "#pragma",
+        // etc. These aren't identifiers (leading `#`) so the generic
+        // identifier branch below never sees them, and plain punctuation is
+        // left uncolored - without this they render as uncolored/white.
+        if lang == Language::C && c == '#' && chars[..i].iter().all(|ch| ch.is_whitespace()) {
+            let start = i;
+            i += 1;
+            while i < n && is_ident_continue(chars[i]) {
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::Macro,
+                start,
+                end: i,
+            });
+            // Color a `<...>` header path the same as a quoted include -
+            // quoted includes ("foo.h") are already handled by the string
+            // branch further down.
+            while i < n && chars[i] == ' ' {
+                i += 1;
+            }
+            if i < n && chars[i] == '<' {
+                let hstart = i;
+                i += 1;
+                while i < n && chars[i] != '>' {
+                    i += 1;
+                }
+                if i < n {
+                    i += 1;
+                }
+                tokens.push(Token {
+                    kind: TokenKind::String,
+                    start: hstart,
+                    end: i,
+                });
+            }
+            continue;
+        }
+
         // Line comment: rest of line.
         if spec.line_comment.iter().any(|lc| starts_with_at(&chars, i, lc)) {
             tokens.push(Token {
@@ -372,6 +411,46 @@ pub fn tokenize_line(
     (tokens, in_block)
 }
 
+/// Layers `overlay` (LSP semantic tokens) on top of `base` (the regex
+/// tokenizer's output) for one line: wherever `overlay` has a token, it
+/// wins; gaps between overlay tokens are filled in from `base`. Both inputs
+/// are assumed sorted by `start` and non-overlapping within themselves,
+/// which both `tokenize_line` and the LSP semantic-token decoder guarantee.
+///
+/// LSP semantic tokens only cover identifiers that need type resolution -
+/// language keywords like `void` are expected to come from the client's own
+/// static highlighting (that's what `base` is), so replacing the whole line
+/// with `overlay` whenever it has *any* tokens left keywords on that line
+/// uncolored. Merging instead keeps both.
+pub fn merge_tokens(base: &[Token], overlay: &[Token], line_len: usize) -> Vec<Token> {
+    let mut result = Vec::with_capacity(base.len() + overlay.len());
+    let mut cursor = 0usize;
+    for ot in overlay {
+        push_base_slice(&mut result, base, cursor, ot.start);
+        result.push(*ot);
+        cursor = cursor.max(ot.end);
+    }
+    push_base_slice(&mut result, base, cursor, line_len);
+    result
+}
+
+fn push_base_slice(result: &mut Vec<Token>, base: &[Token], from: usize, to: usize) {
+    if to <= from {
+        return;
+    }
+    for bt in base {
+        let s = bt.start.max(from);
+        let e = bt.end.min(to);
+        if s < e {
+            result.push(Token {
+                kind: bt.kind,
+                start: s,
+                end: e,
+            });
+        }
+    }
+}
+
 fn find_from(chars: &[char], from: usize, pat: &str) -> Option<usize> {
     let pat_chars: Vec<char> = pat.chars().collect();
     if pat_chars.is_empty() || from >= chars.len() {
@@ -384,4 +463,55 @@ fn find_from(chars: &[char], from: usize, pat: &str) -> Option<usize> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colors_angle_bracket_include_directive() {
+        let (tokens, _) = tokenize_line("#include <vector>", Language::C, false);
+        assert_eq!(tokens.len(), 2, "{tokens:?}");
+        assert_eq!(tokens[0].kind, TokenKind::Macro);
+        assert_eq!((tokens[0].start, tokens[0].end), (0, 8)); // "#include"
+        assert_eq!(tokens[1].kind, TokenKind::String);
+        assert_eq!((tokens[1].start, tokens[1].end), (9, 17)); // "<vector>"
+    }
+
+    #[test]
+    fn colors_quoted_include_directive() {
+        let (tokens, _) = tokenize_line("#include \"foo.h\"", Language::C, false);
+        assert_eq!(tokens.len(), 2, "{tokens:?}");
+        assert_eq!(tokens[0].kind, TokenKind::Macro);
+        assert_eq!(tokens[1].kind, TokenKind::String);
+    }
+
+    #[test]
+    fn merge_keeps_base_keyword_when_overlay_omits_it() {
+        // "void foo(int x)" - base (regex) tags `void` and `int` as Type;
+        // overlay (LSP) only tags `foo` as Function and `x` as Parameter,
+        // as a real semantic-tokens response for a C function signature
+        // would (servers don't re-tag plain keywords).
+        let base = vec![
+            Token { kind: TokenKind::Type, start: 0, end: 4 },   // void
+            Token { kind: TokenKind::Type, start: 9, end: 12 },  // int
+        ];
+        let overlay = vec![
+            Token { kind: TokenKind::Function, start: 5, end: 8 }, // foo
+            Token { kind: TokenKind::Parameter, start: 13, end: 14 }, // x
+        ];
+        let merged = merge_tokens(&base, &overlay, 15);
+
+        let kind_at = |pos: usize| {
+            merged
+                .iter()
+                .find(|t| t.start <= pos && pos < t.end)
+                .map(|t| t.kind)
+        };
+        assert_eq!(kind_at(0), Some(TokenKind::Type)); // void survives
+        assert_eq!(kind_at(5), Some(TokenKind::Function)); // foo from overlay
+        assert_eq!(kind_at(9), Some(TokenKind::Type)); // int survives
+        assert_eq!(kind_at(13), Some(TokenKind::Parameter)); // x from overlay
+    }
 }

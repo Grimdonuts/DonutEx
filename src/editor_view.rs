@@ -256,21 +256,24 @@ pub fn show(
             let lsp_line_tokens = lsp_fresh
                 .then(|| doc.lsp_tokens.as_ref().unwrap().1.get(row).cloned())
                 .flatten()
-                .filter(|t| !t.is_empty());
-            // Some servers (e.g. clangd on preprocessor lines like #include)
-            // emit no semantic tokens at all for certain lines even once
-            // they're otherwise "fresh" for this doc version. Falling back
-            // to the regex tokenizer per-line (rather than only when there's
-            // no LSP data at all) keeps those lines colored instead of
-            // going blank once the LSP response lands.
-            let tokens: Vec<syntax::Token> = match lsp_line_tokens {
-                Some(t) => t,
-                None => {
-                    let starts_in_comment = doc.line_starts_in_block_comment(row);
-                    syntax::tokenize_line(&line, lang, starts_in_comment).0
-                }
-            };
+                .unwrap_or_default();
             let chars: Vec<char> = line.chars().collect();
+            // LSP semantic tokens only cover identifiers needing type
+            // resolution - plain keywords like `void` are expected to come
+            // from the client's own static highlighting, and some servers
+            // (e.g. clangd on preprocessor lines like #include) emit no
+            // tokens at all for certain lines. Always compute the regex
+            // tokenizer's output and layer any LSP tokens on top, rather
+            // than fully replacing it, so keyword coloring and directive
+            // coloring survive on lines the LSP only partially covers (or
+            // doesn't cover at all).
+            let starts_in_comment = doc.line_starts_in_block_comment(row);
+            let base_tokens = syntax::tokenize_line(&line, lang, starts_in_comment).0;
+            let tokens: Vec<syntax::Token> = if lsp_line_tokens.is_empty() {
+                base_tokens
+            } else {
+                syntax::merge_tokens(&base_tokens, &lsp_line_tokens, chars.len())
+            };
             let mut cursor = 0usize;
             let draw_segment = |from: usize, to: usize, color: Color32| {
                 if to <= from {
