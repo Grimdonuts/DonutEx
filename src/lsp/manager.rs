@@ -50,7 +50,7 @@ impl LspManager {
             return ClientSlot::Unavailable;
         }
         for (cmd, args) in candidates {
-            if let Some(path) = servers::find_on_path(cmd) {
+            if let Some(path) = servers::find_binary(cmd, &self.project_root) {
                 match LspClient::spawn(&path, args, &self.project_root) {
                     Ok(client) => return ClientSlot::Running(Box::new(client)),
                     Err(e) => {

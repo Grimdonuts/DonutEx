@@ -69,3 +69,27 @@ pub fn find_on_path(cmd: &str) -> Option<PathBuf> {
     }
     None
 }
+
+/// Looks in the project's own `node_modules/.bin/` before falling back to
+/// `PATH`. A plain (non-`-g`) `npm install` puts a package's binary there,
+/// not on `PATH` - the common case for a JS/TS project that lists
+/// `typescript-language-server` as a devDependency, and something a
+/// PATH-only search would never find regardless of what's installed
+/// globally or how the editor process's PATH ends up configured.
+pub fn find_binary(cmd: &str, project_root: &std::path::Path) -> Option<PathBuf> {
+    let local = project_root.join("node_modules").join(".bin").join(cmd);
+    if local.is_file() {
+        return Some(local);
+    }
+    #[cfg(windows)]
+    {
+        let local_cmd = project_root
+            .join("node_modules")
+            .join(".bin")
+            .join(format!("{cmd}.cmd"));
+        if local_cmd.is_file() {
+            return Some(local_cmd);
+        }
+    }
+    find_on_path(cmd)
+}
