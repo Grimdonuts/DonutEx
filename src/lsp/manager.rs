@@ -85,10 +85,20 @@ impl LspManager {
 
     pub fn poll(&mut self) -> Vec<LspEvent> {
         let mut events = Vec::new();
-        for slot in self.clients.values_mut() {
+        let mut newly_dead = Vec::new();
+        for (&lang, slot) in self.clients.iter_mut() {
             if let ClientSlot::Running(c) = slot {
                 events.extend(c.poll());
+                if c.is_dead() {
+                    newly_dead.push(lang);
+                }
             }
+        }
+        // Retire clients whose `initialize` failed rather than leaving them
+        // as zombies that silently swallow every future request for this
+        // language - see the `dead` field comment in `LspClient`.
+        for lang in newly_dead {
+            self.clients.insert(lang, ClientSlot::Unavailable);
         }
         events
     }

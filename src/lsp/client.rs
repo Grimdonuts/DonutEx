@@ -41,6 +41,14 @@ pub struct LspClient {
     next_id: i64,
     pending: HashMap<i64, PendingKind>,
     initialized: bool,
+    /// Set when `initialize` itself comes back as an error (e.g.
+    /// typescript-language-server refusing to start because no `typescript`
+    /// package is resolvable from the workspace). Without this, `initialized`
+    /// stays false forever and every later did_open/semanticTokens/definition
+    /// call just piles into the `pending_*` queues below with no way to ever
+    /// flush them - silently "the LSP does nothing" for the rest of the
+    /// session. `LspManager::poll` checks this to retire the client instead.
+    dead: bool,
     announced_startup: bool,
     legend: Vec<String>,
     open_docs: HashSet<PathBuf>,
@@ -69,6 +77,7 @@ impl LspClient {
             next_id: 0,
             pending: HashMap::new(),
             initialized: false,
+            dead: false,
             announced_startup: false,
             legend: Vec::new(),
             open_docs: HashSet::new(),
@@ -223,6 +232,13 @@ impl LspClient {
         );
     }
 
+    /// True once `initialize` has come back as an error. The manager retires
+    /// clients in this state instead of leaving them running forever with
+    /// every request silently swallowed.
+    pub fn is_dead(&self) -> bool {
+        self.dead
+    }
+
     /// Drains everything the reader thread has decoded since the last call
     /// and turns it into editor-facing events.
     pub fn poll(&mut self) -> Vec<LspEvent> {
@@ -258,7 +274,18 @@ impl LspClient {
 
     fn handle_response(&mut self, kind: PendingKind, msg: Value, events: &mut Vec<LspEvent>) {
         if let Some(err) = msg.get("error") {
-            events.push(LspEvent::Log(format!("lsp error: {}", err)));
+            if matches!(kind, PendingKind::Initialize) {
+                self.dead = true;
+                self.pending_opens.clear();
+                self.pending_token_requests.clear();
+                self.pending_definition_requests.clear();
+                events.push(LspEvent::Log(format!(
+                    "{} failed to start: {}",
+                    self.name, err
+                )));
+            } else {
+                events.push(LspEvent::Log(format!("{}: {}", self.name, err)));
+            }
             return;
         }
         let result = msg.get("result").cloned().unwrap_or(Value::Null);
