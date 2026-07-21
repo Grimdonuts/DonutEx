@@ -11,3 +11,6 @@ build-win/*
 # Added by cargo
 
 /target
+
+# Local test-fixture projects (contain real .env secrets, e.g. examplets/square-storefront)
+/examplets

@@ -49,7 +49,7 @@ impl LspManager {
 
     pub fn did_open(&mut self, path: &Path, lang: Language, text: &str, version: i32) {
         if let Some(c) = self.ensure_client(lang) {
-            c.did_open(path.to_path_buf(), servers::language_id(lang), text, version);
+            c.did_open(path.to_path_buf(), servers::language_id(lang, path), text, version);
         }
     }
 

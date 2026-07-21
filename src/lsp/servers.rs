@@ -20,13 +20,29 @@ pub fn candidates(lang: Language) -> &'static [(&'static str, &'static [&'static
 }
 
 /// The LSP `languageId` string for a document of this language.
-pub fn language_id(lang: Language) -> &'static str {
+///
+/// `.jsx`/`.tsx` need `javascriptreact`/`typescriptreact` rather than the
+/// plain `javascript`/`typescript` ids - typescript-language-server *will*
+/// still classify these files by their extension either way, but sending the
+/// wrong id measurably corrupts its analysis: goto-definition on a `.tsx`
+/// file opened as `typescript` resolves to a bogus self-referencing location
+/// instead of the real declaration, and semantic-token counts differ too.
+/// `Language::TypeScript`/`JavaScript` don't otherwise distinguish JSX from
+/// non-JSX (our own tokenizer doesn't need to), so the extension is checked
+/// here rather than adding new `Language` variants just for this.
+pub fn language_id(lang: Language, path: &std::path::Path) -> &'static str {
+    let jsx_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("tsx") || e.eq_ignore_ascii_case("jsx"));
     match lang {
         Language::Rust => "rust",
         Language::C => "c",
         Language::Python => "python",
         Language::Lua => "lua",
+        Language::JavaScript if jsx_ext => "javascriptreact",
         Language::JavaScript => "javascript",
+        Language::TypeScript if jsx_ext => "typescriptreact",
         Language::TypeScript => "typescript",
         Language::Json => "json",
         Language::Toml => "toml",

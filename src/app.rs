@@ -133,6 +133,33 @@ impl App {
         }
     }
 
+    /// Repoints the file explorer and LSP workspace root at `path`. Without
+    /// this, `project_root` stayed fixed at whatever directory the process
+    /// happened to launch from forever - so opening a loose file from a
+    /// different project (the normal way to use this app, since there was no
+    /// folder-open before) sent every language server the wrong `rootUri`,
+    /// which for typescript-language-server means it can never find that
+    /// project's `node_modules/typescript` no matter what's installed.
+    fn set_project_root(&mut self, path: PathBuf) {
+        self.project_root = path;
+        self.file_tree = explorer::build_tree(&self.project_root);
+        self.console_lines
+            .push(format!("project root: {}", self.project_root.display()));
+        // Dropping the old manager kills any running server processes (see
+        // `LspTransport`'s `Drop` impl) instead of leaving them attached to
+        // the previous, now-wrong, root.
+        self.lsp = LspManager::new(self.project_root.clone());
+    }
+
+    fn open_folder_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_directory(&self.project_root)
+            .pick_folder()
+        {
+            self.set_project_root(path);
+        }
+    }
+
     fn save_active(&mut self) {
         let needs_path = self.documents[self.active].path.is_none();
         if needs_path {
@@ -291,11 +318,12 @@ impl eframe::App for App {
         }
 
         // global keyboard shortcuts
-        let (ctrl_n, ctrl_o, ctrl_s, ctrl_shift_s, ctrl_w) = ctx.input(|i| {
+        let (ctrl_n, ctrl_o, ctrl_shift_o, ctrl_s, ctrl_shift_s, ctrl_w) = ctx.input(|i| {
             let ctrl = i.modifiers.ctrl || i.modifiers.command;
             (
                 ctrl && i.key_pressed(egui::Key::N),
-                ctrl && i.key_pressed(egui::Key::O),
+                ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::O),
+                ctrl && i.modifiers.shift && i.key_pressed(egui::Key::O),
                 ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::S),
                 ctrl && i.modifiers.shift && i.key_pressed(egui::Key::S),
                 ctrl && i.key_pressed(egui::Key::W),
@@ -304,7 +332,9 @@ impl eframe::App for App {
         if ctrl_n {
             self.new_file();
         }
-        if ctrl_o {
+        if ctrl_shift_o {
+            self.open_folder_dialog();
+        } else if ctrl_o {
             self.open_dialog();
         }
         if ctrl_shift_s {
@@ -326,6 +356,10 @@ impl eframe::App for App {
                     }
                     if ui.button("Open...\tCtrl+O").clicked() {
                         self.open_dialog();
+                        ui.close_menu();
+                    }
+                    if ui.button("Open Folder...\tCtrl+Shift+O").clicked() {
+                        self.open_folder_dialog();
                         ui.close_menu();
                     }
                     if ui.button("Save\tCtrl+S").clicked() {
