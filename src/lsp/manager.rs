@@ -14,6 +14,12 @@ enum ClientSlot {
 pub struct LspManager {
     clients: HashMap<Language, ClientSlot>,
     project_root: PathBuf,
+    // Drained into `LspEvent::Log`s on the next `poll`. Needed because
+    // `try_start` (called from `ensure_client`, itself called from request
+    // methods that don't take a `Vec<LspEvent>`) has nowhere else to surface
+    // "no server binary found" - previously that case produced zero
+    // feedback at all, which looked identical to the editor just not trying.
+    pending_logs: Vec<String>,
 }
 
 impl LspManager {
@@ -21,6 +27,7 @@ impl LspManager {
         Self {
             clients: HashMap::new(),
             project_root,
+            pending_logs: Vec::new(),
         }
     }
 
@@ -35,15 +42,29 @@ impl LspManager {
         }
     }
 
-    fn try_start(&self, lang: Language) -> ClientSlot {
-        for (cmd, args) in servers::candidates(lang) {
+    fn try_start(&mut self, lang: Language) -> ClientSlot {
+        let candidates = servers::candidates(lang);
+        // Empty candidate list means "no LSP support attempted for this
+        // language" by design (see `servers::candidates`) - not worth a log.
+        if candidates.is_empty() {
+            return ClientSlot::Unavailable;
+        }
+        for (cmd, args) in candidates {
             if let Some(path) = servers::find_on_path(cmd) {
                 match LspClient::spawn(&path, args, &self.project_root) {
                     Ok(client) => return ClientSlot::Running(Box::new(client)),
-                    Err(_) => continue,
+                    Err(e) => {
+                        self.pending_logs
+                            .push(format!("failed to launch {}: {}", cmd, e));
+                    }
                 }
             }
         }
+        let tried: Vec<&str> = candidates.iter().map(|(cmd, _)| *cmd).collect();
+        self.pending_logs.push(format!(
+            "no language server on PATH for this file type (tried: {})",
+            tried.join(", ")
+        ));
         ClientSlot::Unavailable
     }
 
@@ -84,7 +105,11 @@ impl LspManager {
     }
 
     pub fn poll(&mut self) -> Vec<LspEvent> {
-        let mut events = Vec::new();
+        let mut events: Vec<LspEvent> = self
+            .pending_logs
+            .drain(..)
+            .map(LspEvent::Log)
+            .collect();
         let mut newly_dead = Vec::new();
         for (&lang, slot) in self.clients.iter_mut() {
             if let ClientSlot::Running(c) = slot {
