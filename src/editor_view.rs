@@ -348,6 +348,25 @@ pub fn show(
         }
     }
 
+    if focused {
+        if let Some(items) = doc.active_completions() {
+            let (comp_line, comp_col) = doc.char_to_line_col(doc.cursor);
+            if comp_line >= first_row && comp_line < last_row {
+                let x = text_x0 + comp_col as f32 * char_w;
+                let y = content_rect.min.y + ((comp_line - first_row) as f32 + 1.0) * row_h;
+                draw_completion_popup(
+                    &painter,
+                    Pos2::new(x, y),
+                    items,
+                    doc.completion_selected,
+                    metrics,
+                    theme,
+                    content_rect,
+                );
+            }
+        }
+    }
+
     draw_scrollbars(
         &painter,
         rect,
@@ -445,6 +464,69 @@ fn draw_scrollbars(
     }
 }
 
+/// Renders the completion popup anchored just below the cursor, flipping
+/// above it or clamping horizontally when it would otherwise overflow
+/// `clip_rect` (the editor's own content area, since this is a raw-painter
+/// widget with no separate floating-window layer to rely on for that).
+#[allow(clippy::too_many_arguments)]
+fn draw_completion_popup(
+    painter: &egui::Painter,
+    anchor: Pos2,
+    items: &[crate::lsp::CompletionItem],
+    selected: usize,
+    metrics: &EditorMetrics,
+    theme: &theme::Theme,
+    clip_rect: Rect,
+) {
+    const MAX_VISIBLE: usize = 8;
+    const WIDTH: f32 = 320.0;
+
+    let row_h = metrics.row_h;
+    let visible = items.len().min(MAX_VISIBLE);
+    let width = WIDTH.min(clip_rect.width().max(1.0));
+    let height = row_h * visible as f32;
+
+    let mut pos = anchor;
+    if pos.y + height > clip_rect.max.y {
+        pos.y = (anchor.y - row_h - height).max(clip_rect.min.y);
+    }
+    if pos.x + width > clip_rect.max.x {
+        pos.x = (clip_rect.max.x - width).max(clip_rect.min.x);
+    }
+
+    let rect = Rect::from_min_size(pos, egui::vec2(width, height));
+    painter.rect_filled(rect, 4.0, theme.panel);
+    painter.rect_stroke(rect, 4.0, Stroke::new(1.0_f32, theme.selection_border));
+    let detail_color = theme.comment.unwrap_or(theme.text);
+
+    for (i, item) in items.iter().take(visible).enumerate() {
+        let row_y = pos.y + i as f32 * row_h;
+        if i == selected {
+            let row_rect = Rect::from_min_size(Pos2::new(pos.x, row_y), egui::vec2(width, row_h));
+            painter.rect_filled(row_rect, 0.0, theme.selection_bg);
+        }
+        let label_end = painter
+            .text(
+                Pos2::new(pos.x + 4.0, row_y),
+                Align2::LEFT_TOP,
+                &item.label,
+                metrics.font_id.clone(),
+                theme.text,
+            )
+            .max
+            .x;
+        if let Some(detail) = &item.detail {
+            painter.text(
+                Pos2::new(label_end + metrics.char_w, row_y),
+                Align2::LEFT_TOP,
+                detail,
+                metrics.font_id.clone(),
+                detail_color,
+            );
+        }
+    }
+}
+
 fn handle_keyboard(ui: &mut egui::Ui, doc: &mut Document, clipboard: &mut arboard::Clipboard) {
     let events = ui.input(|i| i.events.clone());
     for event in events {
@@ -463,6 +545,29 @@ fn handle_keyboard(ui: &mut egui::Ui, doc: &mut Document, clipboard: &mut arboar
             } => {
                 let ctrl = modifiers.ctrl || modifiers.command;
                 match key {
+                    // Completion-popup navigation/accept takes priority over
+                    // the same keys' normal editing behavior (indent, cursor
+                    // move, nothing) - only matches while a popup is actually
+                    // showing, so these fall through to the plain arms below
+                    // otherwise.
+                    Key::Tab if doc.active_completions().is_some() => {
+                        let items = doc.active_completions().unwrap();
+                        if let Some(item) = items.get(doc.completion_selected) {
+                            let insert_text = item.insert_text.clone();
+                            doc.accept_completion(&insert_text);
+                        }
+                    }
+                    Key::ArrowDown if doc.active_completions().is_some() => {
+                        let len = doc.active_completions().unwrap().len();
+                        doc.completion_selected = (doc.completion_selected + 1) % len;
+                    }
+                    Key::ArrowUp if doc.active_completions().is_some() => {
+                        let len = doc.active_completions().unwrap().len();
+                        doc.completion_selected = (doc.completion_selected + len - 1) % len;
+                    }
+                    Key::Escape if doc.active_completions().is_some() => {
+                        doc.lsp_completions = None;
+                    }
                     Key::Backspace => {
                         if doc.has_selection() {
                             doc.delete_selection();

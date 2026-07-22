@@ -104,6 +104,21 @@ impl LspManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn request_completion(
+        &mut self,
+        path: &Path,
+        lang: Language,
+        version: i32,
+        cursor: usize,
+        line: u32,
+        character: u32,
+    ) {
+        if let Some(c) = self.ensure_client(lang) {
+            c.request_completion(path, version, cursor, line, character);
+        }
+    }
+
     pub fn poll(&mut self) -> Vec<LspEvent> {
         let mut events: Vec<LspEvent> = self
             .pending_logs

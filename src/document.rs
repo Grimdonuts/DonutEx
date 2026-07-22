@@ -63,6 +63,15 @@ pub struct Document {
     /// Debounce clock for LSP didChange/semanticTokens requests, so we
     /// don't fire one on every keystroke.
     pub last_edit_at: Instant,
+
+    /// Completion items from the language server, tagged with the document
+    /// `version` and `cursor` offset they were computed for. Kept alongside
+    /// (rather than replacing) `version`/`cursor` comparisons happen in
+    /// `active_completions` - a stale pair (from a keystroke since the
+    /// request went out) hides the popup instead of showing a wrong list.
+    pub lsp_completions: Option<(i32, usize, Vec<crate::lsp::CompletionItem>)>,
+    /// Index into the currently active completion list the popup highlights.
+    pub completion_selected: usize,
 }
 
 impl Document {
@@ -91,6 +100,8 @@ impl Document {
             lsp_synced_version: -1,
             lsp_tokens: None,
             last_edit_at: Instant::now(),
+            lsp_completions: None,
+            completion_selected: 0,
         }
     }
 
@@ -126,6 +137,8 @@ impl Document {
             lsp_synced_version: -1,
             lsp_tokens: None,
             last_edit_at: Instant::now(),
+            lsp_completions: None,
+            completion_selected: 0,
         })
     }
 
@@ -339,6 +352,45 @@ impl Document {
         let line_text = self.line_text(line as usize);
         let col = crate::lsp::utf16_offset_to_char_offset(&line_text, utf16_character as usize);
         self.line_col_to_char(line as usize, col)
+    }
+
+    /// The completion list to show right now, if any. Requires an exact
+    /// match on both `version` and `cursor` against what the request was
+    /// fired for - a keystroke or cursor move since then means the list no
+    /// longer describes the current prefix/position, so it's hidden rather
+    /// than shown stale.
+    pub fn active_completions(&self) -> Option<&[crate::lsp::CompletionItem]> {
+        self.lsp_completions.as_ref().and_then(|(v, c, items)| {
+            (*v == self.version && *c == self.cursor && !items.is_empty())
+                .then_some(items.as_slice())
+        })
+    }
+
+    /// Start of the identifier-ish word ending at the cursor, so accepting a
+    /// completion can replace the whole typed prefix instead of inserting at
+    /// the cursor and leaving the prefix duplicated in front of it.
+    pub fn current_word_start(&self) -> usize {
+        let (line, col) = self.char_to_line_col(self.cursor);
+        let text = self.line_text(line);
+        let chars: Vec<char> = text.chars().collect();
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let mut start = col.min(chars.len());
+        while start > 0 && is_word(chars[start - 1]) {
+            start -= 1;
+        }
+        self.line_col_to_char(line, start)
+    }
+
+    /// Replaces the current word prefix with `insert_text` and closes the
+    /// completion popup.
+    pub fn accept_completion(&mut self, insert_text: &str) {
+        let start = self.current_word_start();
+        let end = self.cursor;
+        if end > start {
+            self.erase(start, end - start);
+        }
+        self.insert(start, insert_text);
+        self.lsp_completions = None;
     }
 
     fn rebuild_comment_state(&mut self) {

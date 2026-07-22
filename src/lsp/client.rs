@@ -18,7 +18,22 @@ pub enum LspEvent {
     Definition {
         locations: Vec<(PathBuf, u32, u32)>, // path, line, UTF-16 character
     },
+    Completion {
+        doc: PathBuf,
+        version: i32,
+        cursor: usize,
+        items: Vec<CompletionItem>,
+    },
     Log(String),
+}
+
+/// Simplified projection of `lsp_types::CompletionItem` - just enough to
+/// render a popup and accept a selection, mirroring how the rest of
+/// `LspEvent` stays app-agnostic rather than exposing `lsp_types` types.
+pub struct CompletionItem {
+    pub label: String,
+    pub insert_text: String,
+    pub detail: Option<String>,
 }
 
 enum PendingKind {
@@ -29,6 +44,11 @@ enum PendingKind {
         lines: Vec<String>,
     },
     Definition,
+    Completion {
+        doc: PathBuf,
+        version: i32,
+        cursor: usize,
+    },
 }
 
 /// One language-server process plus enough request/response bookkeeping to
@@ -62,6 +82,9 @@ pub struct LspClient {
     // kinds above, which is exactly what made goto-definition look broken
     // right after opening a file.
     pending_definition_requests: Vec<(PathBuf, u32, u32)>,
+    // (path, version, cursor char offset, line, character) - same idea, for
+    // completion requests fired while still spawning/handshaking.
+    pending_completion_requests: Vec<(PathBuf, i32, usize, u32, u32)>,
 }
 
 impl LspClient {
@@ -84,6 +107,7 @@ impl LspClient {
             pending_opens: Vec::new(),
             pending_token_requests: Vec::new(),
             pending_definition_requests: Vec::new(),
+            pending_completion_requests: Vec::new(),
         };
 
         let root_uri = path_to_uri(root).map(|u| u.as_str().to_string());
@@ -100,6 +124,9 @@ impl LspClient {
                         "formats": ["relative"],
                     },
                     "definition": { "linkSupport": true },
+                    "completion": {
+                        "completionItem": { "snippetSupport": false },
+                    },
                 },
             },
         });
@@ -232,6 +259,45 @@ impl LspClient {
         );
     }
 
+    pub fn request_completion(
+        &mut self,
+        path: &Path,
+        version: i32,
+        cursor: usize,
+        line: u32,
+        character: u32,
+    ) {
+        if !self.initialized {
+            self.pending_completion_requests
+                .push((path.to_path_buf(), version, cursor, line, character));
+            return;
+        }
+        self.send_completion_request(path, version, cursor, line, character);
+    }
+
+    fn send_completion_request(
+        &mut self,
+        path: &Path,
+        version: i32,
+        cursor: usize,
+        line: u32,
+        character: u32,
+    ) {
+        let Some(uri) = path_to_uri(path) else { return };
+        self.request(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": uri.as_str() },
+                "position": { "line": line, "character": character },
+            }),
+            PendingKind::Completion {
+                doc: path.to_path_buf(),
+                version,
+                cursor,
+            },
+        );
+    }
+
     /// True once `initialize` has come back as an error. The manager retires
     /// clients in this state instead of leaving them running forever with
     /// every request silently swallowed.
@@ -279,6 +345,7 @@ impl LspClient {
                 self.pending_opens.clear();
                 self.pending_token_requests.clear();
                 self.pending_definition_requests.clear();
+                self.pending_completion_requests.clear();
                 events.push(LspEvent::Log(format!(
                     "{} failed to start: {}",
                     self.name, err
@@ -339,6 +406,27 @@ impl LspClient {
                     events.push(LspEvent::Definition { locations });
                 }
             }
+            PendingKind::Completion { doc, version, cursor } => {
+                if result.is_null() {
+                    return;
+                }
+                if let Ok(resp) = serde_json::from_value::<lsp_types::CompletionResponse>(result) {
+                    let raw_items = match resp {
+                        lsp_types::CompletionResponse::Array(items) => items,
+                        lsp_types::CompletionResponse::List(list) => list.items,
+                    };
+                    let items: Vec<CompletionItem> = raw_items
+                        .into_iter()
+                        .take(50)
+                        .map(|item| CompletionItem {
+                            insert_text: completion_insert_text(&item),
+                            label: item.label,
+                            detail: item.detail,
+                        })
+                        .collect();
+                    events.push(LspEvent::Completion { doc, version, cursor, items });
+                }
+            }
         }
     }
 
@@ -376,6 +464,10 @@ impl LspClient {
         for (path, line, character) in definition_requests {
             self.send_definition_request(&path, line, character);
         }
+        let completion_requests = std::mem::take(&mut self.pending_completion_requests);
+        for (path, version, cursor, line, character) in completion_requests {
+            self.send_completion_request(&path, version, cursor, line, character);
+        }
     }
 
     fn handle_server_request(&mut self, id: Value, method: &str, params: Option<&Value>) {
@@ -407,4 +499,22 @@ impl LspClient {
 fn loc_to_tuple(loc: &lsp_types::Location) -> Option<(PathBuf, u32, u32)> {
     let path = uri_to_path(&loc.uri)?;
     Some((path, loc.range.start.line, loc.range.start.character))
+}
+
+/// Prefers `textEdit.newText` over `insertText`/`label`: servers like
+/// rust-analyzer often leave `insertText` empty and put the actual text to
+/// insert only in `textEdit`, while `label` can carry extra display-only
+/// content (e.g. a function's full signature) that isn't valid to insert
+/// as-is.
+fn completion_insert_text(item: &lsp_types::CompletionItem) -> String {
+    if let Some(edit) = &item.text_edit {
+        let new_text = match edit {
+            lsp_types::CompletionTextEdit::Edit(e) => &e.new_text,
+            lsp_types::CompletionTextEdit::InsertAndReplace(e) => &e.new_text,
+        };
+        return new_text.clone();
+    }
+    item.insert_text
+        .clone()
+        .unwrap_or_else(|| item.label.clone())
 }

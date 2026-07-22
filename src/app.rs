@@ -271,6 +271,8 @@ impl App {
         let version = doc.version;
         let text = doc.rope.to_string();
         let lines: Vec<String> = (0..doc.line_count()).map(|l| doc.line_text(l)).collect();
+        let cursor = doc.cursor;
+        let (comp_line, comp_char) = doc.char_to_lsp_line_col(cursor);
 
         if doc.lsp_synced_version == -1 {
             self.lsp.did_open(&path, lang, &text, version);
@@ -278,6 +280,8 @@ impl App {
             self.lsp.did_change(&path, lang, &text, version);
         }
         self.lsp.request_semantic_tokens(&path, lang, version, lines);
+        self.lsp
+            .request_completion(&path, lang, version, cursor, comp_line, comp_char);
         self.documents[idx].lsp_synced_version = version;
     }
 
@@ -303,6 +307,18 @@ impl App {
                         doc.selection_anchor = None;
                         doc.scroll_offset = (line as f32 - 5.0).max(0.0);
                         self.editor_focused = true;
+                    }
+                }
+                LspEvent::Completion { doc, version, cursor, items } => {
+                    if let Some(d) = self
+                        .documents
+                        .iter_mut()
+                        .find(|d| d.path.as_deref() == Some(doc.as_path()))
+                    {
+                        if d.version == version {
+                            d.completion_selected = 0;
+                            d.lsp_completions = Some((version, cursor, items));
+                        }
                     }
                 }
                 LspEvent::Log(s) => self.console_lines.push(format!("[lsp] {}", s)),
