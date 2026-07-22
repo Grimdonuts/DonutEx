@@ -349,8 +349,12 @@ pub fn show(
     }
 
     if focused {
+        // Read what's needed from `doc` before calling `active_completions`
+        // (which needs `&mut doc`) so its returned borrow doesn't overlap
+        // with any other field access below.
+        let (comp_line, comp_col) = doc.char_to_line_col(doc.cursor);
+        let completion_selected = doc.completion_selected;
         if let Some(items) = doc.active_completions() {
-            let (comp_line, comp_col) = doc.char_to_line_col(doc.cursor);
             if comp_line >= first_row && comp_line < last_row {
                 let x = text_x0 + comp_col as f32 * char_w;
                 let y = content_rect.min.y + ((comp_line - first_row) as f32 + 1.0) * row_h;
@@ -358,7 +362,7 @@ pub fn show(
                     &painter,
                     Pos2::new(x, y),
                     &items,
-                    doc.completion_selected,
+                    completion_selected,
                     metrics,
                     theme,
                     content_rect,
@@ -551,9 +555,11 @@ fn handle_keyboard(ui: &mut egui::Ui, doc: &mut Document, clipboard: &mut arboar
                     // showing, so these fall through to the plain arms below
                     // otherwise.
                     Key::Tab if doc.active_completions().is_some() => {
-                        let items = doc.active_completions().unwrap();
-                        if let Some(item) = items.get(doc.completion_selected) {
-                            let insert_text = item.insert_text.clone();
+                        let selected = doc.completion_selected;
+                        let insert_text = doc
+                            .active_completions()
+                            .and_then(|items| items.get(selected).map(|it| it.insert_text.clone()));
+                        if let Some(insert_text) = insert_text {
                             doc.accept_completion(&insert_text);
                         }
                     }

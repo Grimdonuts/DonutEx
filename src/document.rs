@@ -361,24 +361,42 @@ impl Document {
     /// since then means the underlying list no longer describes the current
     /// prefix/position, so it's hidden rather than shown stale.
     ///
-    /// The filtering itself is needed because servers don't necessarily
-    /// narrow the candidate list to the position given in the request -
-    /// typescript-language-server in particular returns a broad,
+    /// Also suppressed entirely (regardless of what the server returned)
+    /// when there's no real trigger for it: inside a string or comment (the
+    /// LSP position is technically valid there, but there's no identifier
+    /// being typed, so any result is noise - e.g. finishing a string literal
+    /// argument shouldn't dump the workspace symbol list), or when the word
+    /// prefix is empty without following a trigger character like `.` (an
+    /// empty prefix after e.g. a closing paren isn't "about to type a
+    /// member", it's just not a completion context at all).
+    ///
+    /// The prefix filtering itself is needed because servers don't
+    /// necessarily narrow the candidate list to the position given in the
+    /// request - typescript-language-server in particular returns a broad,
     /// server-sorted list and expects the client to do this narrowing,
     /// rather than a request-per-keystroke intending the server itself to
     /// filter.
-    pub fn active_completions(&self) -> Option<Vec<&crate::lsp::CompletionItem>> {
-        let (v, c, items) = self.lsp_completions.as_ref()?;
-        if *v != self.version || *c != self.cursor || items.is_empty() {
+    pub fn active_completions(&mut self) -> Option<Vec<&crate::lsp::CompletionItem>> {
+        self.lsp_completions.as_ref()?;
+        if self.cursor_in_string_or_comment() {
             return None;
         }
+        let prefix = self.current_word_prefix();
+        if prefix.is_empty() && !self.cursor_preceded_by_trigger_char() {
+            return None;
+        }
+        let prefix = prefix.to_lowercase();
+
         // Capped *after* filtering (unlike the raw list from the server,
         // which isn't capped at all - see the comment in
         // `LspClient::handle_response`) - the popup only ever shows a
         // handful of rows anyway, but capping here bounds how many
         // `&CompletionItem` refs get collected/cloned-into-a-Vec per frame.
         const MAX_MATCHES: usize = 50;
-        let prefix = self.current_word_prefix().to_lowercase();
+        let (v, c, items) = self.lsp_completions.as_ref()?;
+        if *v != self.version || *c != self.cursor || items.is_empty() {
+            return None;
+        }
         let matches: Vec<&crate::lsp::CompletionItem> = if prefix.is_empty() {
             items.iter().take(MAX_MATCHES).collect()
         } else {
@@ -389,6 +407,40 @@ impl Document {
                 .collect()
         };
         (!matches.is_empty()).then_some(matches)
+    }
+
+    /// Whether the character just before the cursor is inside a string or
+    /// comment per the regex tokenizer (the same one driving syntax
+    /// highlighting) - completions don't make sense there regardless of
+    /// what the language server returns for the position.
+    fn cursor_in_string_or_comment(&mut self) -> bool {
+        let (line, col) = self.char_to_line_col(self.cursor);
+        if col == 0 {
+            return false;
+        }
+        let starts_in_comment = self.line_starts_in_block_comment(line);
+        let text = self.line_text(line);
+        let (tokens, _) = crate::syntax::tokenize_line(&text, self.language, starts_in_comment);
+        let check_col = col - 1;
+        tokens.iter().any(|t| {
+            matches!(
+                t.kind,
+                crate::syntax::TokenKind::String | crate::syntax::TokenKind::Comment
+            ) && check_col >= t.start
+                && check_col < t.end
+        })
+    }
+
+    /// Whether the character just before the cursor is a trigger character
+    /// (currently just `.`, for member-access completion) - the one case
+    /// where an empty word prefix should still show results rather than be
+    /// treated as "not a completion context".
+    fn cursor_preceded_by_trigger_char(&self) -> bool {
+        let (line, col) = self.char_to_line_col(self.cursor);
+        if col == 0 {
+            return false;
+        }
+        self.line_text(line).chars().nth(col - 1) == Some('.')
     }
 
     /// Start of the identifier-ish word ending at the cursor, so accepting a
