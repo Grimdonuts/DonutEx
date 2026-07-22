@@ -354,16 +354,34 @@ impl Document {
         self.line_col_to_char(line as usize, col)
     }
 
-    /// The completion list to show right now, if any. Requires an exact
-    /// match on both `version` and `cursor` against what the request was
-    /// fired for - a keystroke or cursor move since then means the list no
-    /// longer describes the current prefix/position, so it's hidden rather
-    /// than shown stale.
-    pub fn active_completions(&self) -> Option<&[crate::lsp::CompletionItem]> {
-        self.lsp_completions.as_ref().and_then(|(v, c, items)| {
-            (*v == self.version && *c == self.cursor && !items.is_empty())
-                .then_some(items.as_slice())
-        })
+    /// The completion list to show right now, if any, filtered down to items
+    /// whose `filter_text` starts with the word currently typed at the
+    /// cursor. Requires an exact match on both `version` and `cursor`
+    /// against what the request was fired for - a keystroke or cursor move
+    /// since then means the underlying list no longer describes the current
+    /// prefix/position, so it's hidden rather than shown stale.
+    ///
+    /// The filtering itself is needed because servers don't necessarily
+    /// narrow the candidate list to the position given in the request -
+    /// typescript-language-server in particular returns a broad,
+    /// server-sorted list and expects the client to do this narrowing,
+    /// rather than a request-per-keystroke intending the server itself to
+    /// filter.
+    pub fn active_completions(&self) -> Option<Vec<&crate::lsp::CompletionItem>> {
+        let (v, c, items) = self.lsp_completions.as_ref()?;
+        if *v != self.version || *c != self.cursor || items.is_empty() {
+            return None;
+        }
+        let prefix = self.current_word_prefix().to_lowercase();
+        let matches: Vec<&crate::lsp::CompletionItem> = if prefix.is_empty() {
+            items.iter().collect()
+        } else {
+            items
+                .iter()
+                .filter(|it| it.filter_text.to_lowercase().starts_with(&prefix))
+                .collect()
+        };
+        (!matches.is_empty()).then_some(matches)
     }
 
     /// Start of the identifier-ish word ending at the cursor, so accepting a
@@ -379,6 +397,13 @@ impl Document {
             start -= 1;
         }
         self.line_col_to_char(line, start)
+    }
+
+    /// The identifier-ish text between `current_word_start` and the cursor -
+    /// what the user has actually typed of the current word so far.
+    pub fn current_word_prefix(&self) -> String {
+        let start = self.current_word_start();
+        self.rope.slice(start..self.cursor).to_string()
     }
 
     /// Replaces the current word prefix with `insert_text` and closes the

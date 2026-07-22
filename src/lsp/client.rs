@@ -34,6 +34,11 @@ pub struct CompletionItem {
     pub label: String,
     pub insert_text: String,
     pub detail: Option<String>,
+    /// What to prefix-match against the typed word - servers like
+    /// typescript-language-server return a broad, unfiltered candidate list
+    /// and expect the client to narrow it using this (falling back to
+    /// `label` when absent) rather than the position alone.
+    pub filter_text: String,
 }
 
 enum PendingKind {
@@ -420,6 +425,10 @@ impl LspClient {
                         .take(50)
                         .map(|item| CompletionItem {
                             insert_text: completion_insert_text(&item),
+                            filter_text: item
+                                .filter_text
+                                .clone()
+                                .unwrap_or_else(|| item.label.clone()),
                             label: item.label,
                             detail: item.detail,
                         })

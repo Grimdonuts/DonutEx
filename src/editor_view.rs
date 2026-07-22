@@ -357,7 +357,7 @@ pub fn show(
                 draw_completion_popup(
                     &painter,
                     Pos2::new(x, y),
-                    items,
+                    &items,
                     doc.completion_selected,
                     metrics,
                     theme,
@@ -472,7 +472,7 @@ fn draw_scrollbars(
 fn draw_completion_popup(
     painter: &egui::Painter,
     anchor: Pos2,
-    items: &[crate::lsp::CompletionItem],
+    items: &[&crate::lsp::CompletionItem],
     selected: usize,
     metrics: &EditorMetrics,
     theme: &theme::Theme,
