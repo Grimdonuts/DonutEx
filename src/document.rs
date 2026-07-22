@@ -372,13 +372,20 @@ impl Document {
         if *v != self.version || *c != self.cursor || items.is_empty() {
             return None;
         }
+        // Capped *after* filtering (unlike the raw list from the server,
+        // which isn't capped at all - see the comment in
+        // `LspClient::handle_response`) - the popup only ever shows a
+        // handful of rows anyway, but capping here bounds how many
+        // `&CompletionItem` refs get collected/cloned-into-a-Vec per frame.
+        const MAX_MATCHES: usize = 50;
         let prefix = self.current_word_prefix().to_lowercase();
         let matches: Vec<&crate::lsp::CompletionItem> = if prefix.is_empty() {
-            items.iter().collect()
+            items.iter().take(MAX_MATCHES).collect()
         } else {
             items
                 .iter()
                 .filter(|it| it.filter_text.to_lowercase().starts_with(&prefix))
+                .take(MAX_MATCHES)
                 .collect()
         };
         (!matches.is_empty()).then_some(matches)

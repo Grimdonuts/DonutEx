@@ -420,9 +420,16 @@ impl LspClient {
                         lsp_types::CompletionResponse::Array(items) => items,
                         lsp_types::CompletionResponse::List(list) => list.items,
                     };
+                    // No `.take()` here - some servers (typescript-language-
+                    // server in particular) return every workspace symbol
+                    // in one big, roughly-alphabetical list rather than
+                    // something already narrowed to the position given.
+                    // Truncating before the client-side prefix filter in
+                    // `Document::active_completions` would drop exactly the
+                    // matches a user typing a lowercase prefix wants, since
+                    // uppercase-led names sort first in that list.
                     let items: Vec<CompletionItem> = raw_items
                         .into_iter()
-                        .take(50)
                         .map(|item| CompletionItem {
                             insert_text: completion_insert_text(&item),
                             filter_text: item
