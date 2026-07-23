@@ -312,6 +312,29 @@ impl App {
         self.file_tree = explorer::build_tree(&self.project_root);
     }
 
+    /// Saves any dirty, on-disk document whose last edit is older than the
+    /// configured autosave delay - mirrors VS Code's "afterDelay" autosave.
+    /// Untitled buffers (no path yet) are left alone, same as VS Code, since
+    /// there's nowhere to silently write them without prompting.
+    fn autosave_tick(&mut self) {
+        if !self.settings.autosave {
+            return;
+        }
+        let delay = Duration::from_millis(self.settings.autosave_delay_ms);
+        let mut log = Vec::new();
+        for doc in self.documents.iter_mut() {
+            if doc.dirty && doc.path.is_some() && doc.last_edit_at.elapsed() >= delay {
+                match doc.save() {
+                    Ok(()) => log.push(format!("autosaved {}", doc.display_name)),
+                    Err(e) => {
+                        log.push(format!("autosave failed for {}: {}", doc.display_name, e))
+                    }
+                }
+            }
+        }
+        self.console_lines.extend(log);
+    }
+
     fn drain_plugin_messages(&mut self) {
         for msg in self.plugins.drain_messages() {
             match msg {
@@ -487,7 +510,18 @@ impl eframe::App for App {
                         self.reload_plugins(ctx);
                         ui.close_menu();
                     }
-                    ui.label(format!("{} loaded", self.plugins.loaded_files.len()));
+                    ui.separator();
+                    if self.plugins.loaded_files.is_empty() {
+                        ui.label("No plugins loaded");
+                    } else {
+                        for path in &self.plugins.loaded_files {
+                            let name = std::path::Path::new(path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.clone());
+                            ui.label(name);
+                        }
+                    }
                 });
                 if ui.button("Settings").clicked() {
                     self.show_settings = true;
@@ -518,6 +552,20 @@ impl eframe::App for App {
                                     }
                                 }
                             });
+                    });
+
+                    ui.separator();
+                    ui.heading("Editor");
+                    ui.checkbox(&mut self.settings.autosave, "Autosave");
+                    ui.add_enabled_ui(self.settings.autosave, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Delay (ms):");
+                            ui.add(
+                                egui::DragValue::new(&mut self.settings.autosave_delay_ms)
+                                    .range(100..=10_000)
+                                    .speed(50),
+                            );
+                        });
                     });
                 });
             self.show_settings = open;
@@ -674,6 +722,7 @@ impl eframe::App for App {
         self.drain_plugin_messages();
         self.sync_active_doc_with_lsp();
         self.drain_lsp_events();
+        self.autosave_tick();
 
         // Editor content changes constantly while typing; keep redrawing so
         // the caret/scroll stay responsive without waiting on OS events.
