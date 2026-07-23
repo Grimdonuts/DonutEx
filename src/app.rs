@@ -538,7 +538,15 @@ impl eframe::App for App {
                         BottomTab::Terminal => {
                             if self.terminal.is_none() {
                                 match Terminal::spawn(24, 80, &self.project_root) {
-                                    Ok(term) => self.terminal = Some(term),
+                                    Ok(term) => {
+                                        self.console_lines.push(format!(
+                                            "terminal: started (pid {})",
+                                            term.pid()
+                                                .map(|p| p.to_string())
+                                                .unwrap_or_else(|| "?".to_string())
+                                        ));
+                                        self.terminal = Some(term);
+                                    }
                                     Err(e) => {
                                         self.console_lines
                                             .push(format!("failed to start terminal: {}", e));
@@ -547,13 +555,16 @@ impl eframe::App for App {
                             }
                             if let Some(term) = self.terminal.as_mut() {
                                 let metrics = self.metrics.as_ref().unwrap();
-                                let response = terminal_view::show(
+                                let outcome = terminal_view::show(
                                     ui,
                                     term,
                                     metrics,
                                     self.terminal_focused,
                                 );
-                                if response.clicked() || response.dragged() {
+                                if let Some(msg) = outcome.exited_message {
+                                    self.console_lines.push(msg);
+                                }
+                                if outcome.response.clicked() || outcome.response.dragged() {
                                     self.terminal_focused = true;
                                     self.editor_focused = false;
                                 }

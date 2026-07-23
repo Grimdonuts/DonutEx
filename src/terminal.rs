@@ -19,6 +19,7 @@ pub struct Terminal {
     rows: u16,
     cols: u16,
     alive: bool,
+    pid: Option<u32>,
 }
 
 impl Terminal {
@@ -58,6 +59,8 @@ impl Terminal {
             }
         });
 
+        let pid = child.process_id();
+
         Ok(Self {
             parser: vt100::Parser::new(rows, cols, 5000),
             writer,
@@ -67,21 +70,32 @@ impl Terminal {
             rows,
             cols,
             alive: true,
+            pid,
         })
+    }
+
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     /// Drains any output the shell has produced since the last frame and
     /// checks whether the child process is still running. Cheap to call
-    /// every frame - it never blocks.
-    pub fn pump(&mut self) {
+    /// every frame - it never blocks. Returns a message the first time the
+    /// child is observed to have exited, so the caller can surface it (a
+    /// shell that dies moments after spawning otherwise looks identical to
+    /// one that's just quietly waiting at a prompt - a blank, unresponsive
+    /// pane either way).
+    pub fn pump(&mut self) -> Option<String> {
         while let Ok(bytes) = self.rx.try_recv() {
             self.parser.process(&bytes);
         }
         if self.alive {
-            if let Ok(Some(_)) = self.child.try_wait() {
+            if let Ok(Some(status)) = self.child.try_wait() {
                 self.alive = false;
+                return Some(format!("terminal: shell exited ({})", status));
             }
         }
+        None
     }
 
     pub fn is_alive(&self) -> bool {

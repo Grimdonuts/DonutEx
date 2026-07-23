@@ -2,6 +2,14 @@ use crate::editor_view::EditorMetrics;
 use crate::terminal::Terminal;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke};
 
+/// What happened this frame that the caller (app.rs) needs to act on beyond
+/// just repainting - currently only a "the shell just exited" notice, so it
+/// can be surfaced in the console instead of the pane just going quiet.
+pub struct TerminalOutcome {
+    pub response: egui::Response,
+    pub exited_message: Option<String>,
+}
+
 /// Renders one PTY-backed terminal as a virtualized monospace grid, and - if
 /// `focused` - forwards keyboard input to the shell. The counterpart to
 /// `editor_view::show`, but for `Terminal` instead of `Document`.
@@ -10,7 +18,7 @@ pub fn show(
     term: &mut Terminal,
     metrics: &EditorMetrics,
     focused: bool,
-) -> egui::Response {
+) -> TerminalOutcome {
     let char_w = metrics.char_w;
     let row_h = metrics.row_h;
 
@@ -18,7 +26,7 @@ pub fn show(
     let cols = ((avail.x / char_w).floor() as u16).max(1);
     let rows = ((avail.y / row_h).floor() as u16).max(1);
     term.resize(rows, cols);
-    term.pump();
+    let exited_message = term.pump();
 
     let (rect, response) = ui.allocate_exact_size(avail, Sense::click_and_drag());
 
@@ -185,7 +193,10 @@ pub fn show(
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     }
 
-    response
+    TerminalOutcome {
+        response,
+        exited_message,
+    }
 }
 
 /// Translates a non-text key press (plus modifiers) into the byte sequence a
