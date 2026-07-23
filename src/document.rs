@@ -75,14 +75,10 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn new_untitled(counter: usize) -> Self {
+    pub fn new_untitled(display_name: String) -> Self {
         Self {
             path: None,
-            display_name: if counter == 0 {
-                "untitled".to_string()
-            } else {
-                format!("untitled-{}", counter)
-            },
+            display_name,
             rope: Rope::new(),
             dirty: false,
             language: Language::PlainText,

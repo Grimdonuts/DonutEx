@@ -12,7 +12,6 @@ use std::time::Duration;
 pub struct App {
     documents: Vec<Document>,
     active: usize,
-    untitled_counter: usize,
 
     show_explorer: bool,
     show_console: bool,
@@ -64,7 +63,7 @@ impl App {
         let current_theme = 0;
         theme::apply(&cc.egui_ctx, &themes[current_theme]);
 
-        let mut documents = vec![Document::new_untitled(0)];
+        let mut documents = vec![Document::new_untitled("untitled".to_string())];
         if let Some(path) = initial_file {
             match Document::from_path(path.clone()) {
                 Ok(doc) => documents = vec![doc],
@@ -77,7 +76,6 @@ impl App {
         Self {
             documents,
             active: 0,
-            untitled_counter: 1,
             show_explorer: true,
             show_console: true,
             project_root,
@@ -130,9 +128,35 @@ impl App {
     }
 
     fn new_file(&mut self) {
-        let doc = Document::new_untitled(self.untitled_counter);
-        self.untitled_counter += 1;
+        let doc = Document::new_untitled(self.next_untitled_name());
         self.push_document(doc);
+    }
+
+    /// Picks a name for a fresh untitled tab that won't collide with any
+    /// currently open unsaved buffer. An untouched blank placeholder tab is
+    /// excluded from the collision check since `push_document` replaces it
+    /// rather than adding alongside it - so as long as at most one such
+    /// placeholder is ever open, its name stays "untitled" instead of
+    /// climbing on every "New File" click.
+    fn next_untitled_name(&self) -> String {
+        let taken: std::collections::HashSet<&str> = self
+            .documents
+            .iter()
+            .filter(|d| d.path.is_none() && !d.is_blank_placeholder())
+            .map(|d| d.display_name.as_str())
+            .collect();
+        let mut n = 0;
+        loop {
+            let name = if n == 0 {
+                "untitled".to_string()
+            } else {
+                format!("untitled-{}", n)
+            };
+            if !taken.contains(name.as_str()) {
+                return name;
+            }
+            n += 1;
+        }
     }
 
     fn open_dialog(&mut self) {
@@ -209,8 +233,7 @@ impl App {
             }
         }
         if self.documents.len() == 1 {
-            self.documents[0] = Document::new_untitled(self.untitled_counter);
-            self.untitled_counter += 1;
+            self.documents[0] = Document::new_untitled("untitled".to_string());
             self.active = 0;
             return;
         }
