@@ -5,6 +5,7 @@ mod editor_view;
 mod explorer;
 mod lsp;
 mod plugins;
+mod settings;
 mod syntax;
 mod terminal;
 mod terminal_view;

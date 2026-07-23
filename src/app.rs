@@ -4,6 +4,7 @@ use crate::editor_view::{self, EditorMetrics};
 use crate::explorer::{self, FileNode};
 use crate::lsp::{LspEvent, LspManager};
 use crate::plugins::{PluginEngine, PluginMessage};
+use crate::settings::{self, AppSettings};
 use crate::terminal::Terminal;
 use crate::terminal_view;
 use crate::theme;
@@ -24,6 +25,7 @@ pub struct App {
 
     show_explorer: bool,
     show_bottom_panel: bool,
+    show_settings: bool,
     bottom_tab: BottomTab,
     /// Spawned lazily the first time the Terminal tab is opened, so an
     /// unused editor never pays for a shell process.
@@ -39,6 +41,8 @@ pub struct App {
 
     themes: Vec<theme::Theme>,
     current_theme: usize,
+
+    settings: AppSettings,
 
     lsp: LspManager,
 
@@ -77,7 +81,14 @@ impl App {
         console_lines.insert(0, "DonutEx starting up.".to_string());
 
         let themes = merge_themes(vec![theme::Theme::built_in_dark()], plugins.take_themes());
-        let current_theme = 0;
+        let settings: AppSettings = cc
+            .storage
+            .and_then(|storage| eframe::get_value(storage, settings::STORAGE_KEY))
+            .unwrap_or_default();
+        let current_theme = themes
+            .iter()
+            .position(|t| t.name == settings.theme_name)
+            .unwrap_or(0);
         theme::apply(&cc.egui_ctx, &themes[current_theme]);
 
         let mut documents = vec![Document::new_untitled("untitled".to_string())];
@@ -95,6 +106,7 @@ impl App {
             active: 0,
             show_explorer: true,
             show_bottom_panel: true,
+            show_settings: false,
             bottom_tab: BottomTab::Console,
             terminal: None,
             project_root,
@@ -104,6 +116,7 @@ impl App {
             plugins_dir,
             themes,
             current_theme,
+            settings,
             lsp,
             metrics: None,
             clipboard: arboard::Clipboard::new().expect("open system clipboard"),
@@ -281,6 +294,7 @@ impl App {
             .iter()
             .position(|t| t.name == current_name)
             .unwrap_or(0);
+        self.settings.theme_name = self.themes[self.current_theme].name.clone();
         theme::apply(ctx, &self.themes[self.current_theme]);
 
         self.console_lines.push("plugins reloaded".to_string());
@@ -289,6 +303,7 @@ impl App {
     fn switch_theme(&mut self, ctx: &egui::Context, idx: usize) {
         if idx < self.themes.len() {
             self.current_theme = idx;
+            self.settings.theme_name = self.themes[idx].name.clone();
             theme::apply(ctx, &self.themes[idx]);
         }
     }
@@ -382,6 +397,10 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, settings::STORAGE_KEY, &self.settings);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.metrics.is_none() {
             self.metrics = Some(EditorMetrics::compute(ctx, 15.0));
@@ -470,20 +489,42 @@ impl eframe::App for App {
                     }
                     ui.label(format!("{} loaded", self.plugins.loaded_files.len()));
                 });
-                ui.menu_button("Themes", |ui| {
-                    let mut selected = None;
-                    for (i, t) in self.themes.iter().enumerate() {
-                        if ui.radio(i == self.current_theme, &t.name).clicked() {
-                            selected = Some(i);
-                        }
-                    }
-                    if let Some(i) = selected {
-                        self.switch_theme(ctx, i);
-                        ui.close_menu();
-                    }
-                });
+                if ui.button("Settings").clicked() {
+                    self.show_settings = true;
+                }
             });
         });
+
+        let mut theme_selected = None;
+        if self.show_settings {
+            let mut open = self.show_settings;
+            egui::Window::new("Settings")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.heading("Appearance");
+                    ui.horizontal(|ui| {
+                        ui.label("Theme:");
+                        egui::ComboBox::from_id_salt("settings_theme_combo")
+                            .selected_text(&self.themes[self.current_theme].name)
+                            .show_ui(ui, |ui| {
+                                for (i, t) in self.themes.iter().enumerate() {
+                                    if ui
+                                        .selectable_label(i == self.current_theme, &t.name)
+                                        .clicked()
+                                    {
+                                        theme_selected = Some(i);
+                                    }
+                                }
+                            });
+                    });
+                });
+            self.show_settings = open;
+        }
+        if let Some(i) = theme_selected {
+            self.switch_theme(ctx, i);
+        }
 
         if self.show_explorer {
             egui::SidePanel::left("explorer")
