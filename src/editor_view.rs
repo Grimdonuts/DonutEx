@@ -309,7 +309,7 @@ pub fn show(
 
     let hover_pos = ui.input(|i| i.pointer.hover_pos());
 
-    if hover_pos.is_some_and(|pos| content_rect.contains(pos)) {
+    if response.hovered() && hover_pos.is_some_and(|pos| content_rect.contains(pos)) {
         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Text);
     }
 
@@ -317,7 +317,7 @@ pub fn show(
     // switch to a pointing-hand cursor, like the ctrl+click-to-definition
     // hint other editors show.
     let ctrl_held = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
-    if ctrl_held {
+    if ctrl_held && response.hovered() {
         if let Some(pos) = hover_pos {
             if content_rect.contains(pos) {
                 let local_y = (pos.y - content_rect.min.y).max(0.0);
