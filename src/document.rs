@@ -384,8 +384,13 @@ impl Document {
         if self.cursor_in_string_or_comment() {
             return None;
         }
+        // Below this many typed characters, the popup is more distracting
+        // than useful - a trigger char (`.`) bypasses the minimum, since
+        // member-access completion is expected to show up immediately.
+        const MIN_PREFIX_LEN: usize = 3;
+
         let prefix = self.current_word_prefix();
-        if prefix.is_empty() && !self.cursor_preceded_by_trigger_char() {
+        if prefix.chars().count() < MIN_PREFIX_LEN && !self.cursor_preceded_by_trigger_char() {
             return None;
         }
         let prefix = prefix.to_lowercase();
