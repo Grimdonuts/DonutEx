@@ -13,6 +13,9 @@ arboard = "3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 lsp-types = "0.97.0"
+portable-pty = "0.9.0"
+vt100 = "0.16.2"
+anyhow = "1.0.104"
 
 [profile.release]
 opt-level = 3

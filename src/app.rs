@@ -4,17 +4,30 @@ use crate::editor_view::{self, EditorMetrics};
 use crate::explorer::{self, FileNode};
 use crate::lsp::{LspEvent, LspManager};
 use crate::plugins::{PluginEngine, PluginMessage};
+use crate::terminal::Terminal;
+use crate::terminal_view;
 use crate::theme;
 use eframe::egui;
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// Which view the bottom panel is currently showing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BottomTab {
+    Console,
+    Terminal,
+}
 
 pub struct App {
     documents: Vec<Document>,
     active: usize,
 
     show_explorer: bool,
-    show_console: bool,
+    show_bottom_panel: bool,
+    bottom_tab: BottomTab,
+    /// Spawned lazily the first time the Terminal tab is opened, so an
+    /// unused editor never pays for a shell process.
+    terminal: Option<Terminal>,
 
     project_root: PathBuf,
     file_tree: FileNode,
@@ -32,6 +45,10 @@ pub struct App {
     metrics: Option<EditorMetrics>,
     clipboard: arboard::Clipboard,
     editor_focused: bool,
+    /// Mirrors `editor_focused` for the terminal pane - mutually exclusive
+    /// with it, so global shortcuts (Ctrl+N etc.) can be suppressed while
+    /// the shell, not the editor, should receive keystrokes.
+    terminal_focused: bool,
 }
 
 /// Layers plugin-registered themes onto a base list, matched by name: a
@@ -77,7 +94,9 @@ impl App {
             documents,
             active: 0,
             show_explorer: true,
-            show_console: true,
+            show_bottom_panel: true,
+            bottom_tab: BottomTab::Console,
+            terminal: None,
             project_root,
             file_tree,
             console_lines,
@@ -89,6 +108,7 @@ impl App {
             metrics: None,
             clipboard: arboard::Clipboard::new().expect("open system clipboard"),
             editor_focused: true,
+            terminal_focused: false,
         }
     }
 
@@ -379,22 +399,26 @@ impl eframe::App for App {
                 ctrl && i.key_pressed(egui::Key::W),
             )
         });
-        if ctrl_n {
-            self.new_file();
-        }
-        if ctrl_shift_o {
-            self.open_folder_dialog();
-        } else if ctrl_o {
-            self.open_dialog();
-        }
-        if ctrl_shift_s {
-            self.save_active_as();
-        } else if ctrl_s {
-            self.save_active();
-        }
-        if ctrl_w {
-            let active = self.active;
-            self.close_tab(active);
+        // Suppressed while the terminal has focus so these don't fire
+        // alongside whatever the shell itself does with the same chord.
+        if !self.terminal_focused {
+            if ctrl_n {
+                self.new_file();
+            }
+            if ctrl_shift_o {
+                self.open_folder_dialog();
+            } else if ctrl_o {
+                self.open_dialog();
+            }
+            if ctrl_shift_s {
+                self.save_active_as();
+            } else if ctrl_s {
+                self.save_active();
+            }
+            if ctrl_w {
+                let active = self.active;
+                self.close_tab(active);
+            }
         }
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
@@ -433,7 +457,7 @@ impl eframe::App for App {
                 });
                 ui.menu_button("View", |ui| {
                     ui.checkbox(&mut self.show_explorer, "File Explorer");
-                    ui.checkbox(&mut self.show_console, "Console");
+                    ui.checkbox(&mut self.show_bottom_panel, "Console / Terminal");
                     if ui.button("Refresh Explorer").clicked() {
                         self.refresh_explorer();
                         ui.close_menu();
@@ -485,16 +509,59 @@ impl eframe::App for App {
                 });
         }
 
-        if self.show_console {
+        if self.show_bottom_panel {
             egui::TopBottomPanel::bottom("console")
                 .resizable(true)
                 .default_height(180.0)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Console");
+                        if ui
+                            .selectable_label(self.bottom_tab == BottomTab::Console, "Console")
+                            .clicked()
+                        {
+                            self.bottom_tab = BottomTab::Console;
+                            self.editor_focused = true;
+                            self.terminal_focused = false;
+                        }
+                        if ui
+                            .selectable_label(self.bottom_tab == BottomTab::Terminal, "Terminal")
+                            .clicked()
+                        {
+                            self.bottom_tab = BottomTab::Terminal;
+                            self.terminal_focused = true;
+                            self.editor_focused = false;
+                        }
                     });
                     ui.separator();
-                    console::show(ui, &self.console_lines);
+                    match self.bottom_tab {
+                        BottomTab::Console => console::show(ui, &self.console_lines),
+                        BottomTab::Terminal => {
+                            if self.terminal.is_none() {
+                                match Terminal::spawn(24, 80, &self.project_root) {
+                                    Ok(term) => self.terminal = Some(term),
+                                    Err(e) => {
+                                        self.console_lines
+                                            .push(format!("failed to start terminal: {}", e));
+                                    }
+                                }
+                            }
+                            if let Some(term) = self.terminal.as_mut() {
+                                let metrics = self.metrics.as_ref().unwrap();
+                                let response = terminal_view::show(
+                                    ui,
+                                    term,
+                                    metrics,
+                                    self.terminal_focused,
+                                );
+                                if response.clicked() || response.dragged() {
+                                    self.terminal_focused = true;
+                                    self.editor_focused = false;
+                                }
+                            } else {
+                                ui.label("Terminal unavailable - see console for the error.");
+                            }
+                        }
+                    }
                 });
         }
 
@@ -516,6 +583,7 @@ impl eframe::App for App {
                                 if ui.selectable_label(selected, label).clicked() {
                                     self.active = i;
                                     self.editor_focused = true;
+                                    self.terminal_focused = false;
                                 }
                                 if ui.small_button("x").clicked() {
                                     close_request = Some(i);
@@ -539,6 +607,7 @@ impl eframe::App for App {
             );
             if outcome.response.clicked() || outcome.response.dragged() {
                 self.editor_focused = true;
+                self.terminal_focused = false;
             }
             if let Some(offset) = outcome.goto_definition {
                 let doc = &self.documents[self.active];

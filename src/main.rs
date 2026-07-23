@@ -6,6 +6,8 @@ mod explorer;
 mod lsp;
 mod plugins;
 mod syntax;
+mod terminal;
+mod terminal_view;
 mod theme;
 
 fn main() -> eframe::Result<()> {
