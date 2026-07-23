@@ -134,6 +134,12 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
 
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+    // egui makes every label click-drag-selectable by default, which also
+    // switches the cursor to an I-beam on hover - appropriate for editor
+    // text, but not for chrome like headings, menu items, and tab titles.
+    // The editor's own text is drawn with the painter (not `Label`), so it
+    // isn't affected by this and keeps setting its I-beam explicitly.
+    style.interaction.selectable_labels = false;
     ctx.set_style(style);
 }
 
