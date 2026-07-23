@@ -105,6 +105,13 @@ impl Document {
         }
     }
 
+    /// True for an untouched "untitled" tab: no backing file, no edits, no
+    /// content. Opening or creating a new document should replace this
+    /// placeholder rather than leaving it stranded as an extra tab.
+    pub fn is_blank_placeholder(&self) -> bool {
+        self.path.is_none() && !self.dirty && self.rope.len_chars() == 0
+    }
+
     pub fn from_path(path: PathBuf) -> std::io::Result<Self> {
         let text = std::fs::read_to_string(&path)?;
         // Canonicalize so LSP file:// URIs (and tab-dedup path comparisons)

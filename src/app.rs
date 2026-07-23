@@ -94,6 +94,19 @@ impl App {
         }
     }
 
+    /// Adds `doc` as a tab. If an untouched "untitled" placeholder tab is
+    /// currently open, it's replaced in place instead of leaving it stranded
+    /// alongside the new tab.
+    fn push_document(&mut self, doc: Document) {
+        if let Some(idx) = self.documents.iter().position(|d| d.is_blank_placeholder()) {
+            self.documents[idx] = doc;
+            self.active = idx;
+        } else {
+            self.documents.push(doc);
+            self.active = self.documents.len() - 1;
+        }
+    }
+
     fn open_path(&mut self, path: PathBuf) {
         if let Some(idx) = self
             .documents
@@ -105,8 +118,7 @@ impl App {
         }
         match Document::from_path(path.clone()) {
             Ok(doc) => {
-                self.documents.push(doc);
-                self.active = self.documents.len() - 1;
+                self.push_document(doc);
                 self.console_lines
                     .push(format!("opened {}", path.display()));
             }
@@ -118,10 +130,9 @@ impl App {
     }
 
     fn new_file(&mut self) {
-        self.documents
-            .push(Document::new_untitled(self.untitled_counter));
+        let doc = Document::new_untitled(self.untitled_counter);
         self.untitled_counter += 1;
-        self.active = self.documents.len() - 1;
+        self.push_document(doc);
     }
 
     fn open_dialog(&mut self) {

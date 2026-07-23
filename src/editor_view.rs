@@ -309,6 +309,10 @@ pub fn show(
 
     let hover_pos = ui.input(|i| i.pointer.hover_pos());
 
+    if hover_pos.is_some_and(|pos| content_rect.contains(pos)) {
+        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Text);
+    }
+
     // Ctrl-hover affordance: underline the identifier under the pointer and
     // switch to a pointing-hand cursor, like the ctrl+click-to-definition
     // hint other editors show.
