@@ -7,6 +7,7 @@ mod explorer;
 mod git;
 mod lsp;
 mod plugins;
+mod search;
 mod settings;
 mod source_control;
 mod syntax;

@@ -15,13 +15,22 @@ renderer) is preserved under [`legacy-cpp/`](legacy-cpp/) for reference.
 
 ## Layout
 
-- **Far left**: activity bar - switches the sidebar between Explorer and
-  Source Control
-- **Left**: file explorer for the current project directory, or the Source
-  Control panel
+- **Far left**: activity bar - switches the sidebar between Explorer,
+  Search, and Source Control
+- **Left**: file explorer, project-wide search, or the Source Control panel
 - **Top of center**: tab bar for open files
 - **Center**: the text editor
 - **Bottom**: console/output panel (also used for plugin `print()` output)
+
+## Search
+
+A project-wide text search, opened from the magnifying-glass icon in the
+activity bar (badge shows the result count). Runs on Enter / the Search
+button rather than per keystroke - it walks the project directory itself
+(same ignore list as the file explorer: `.git`, `target`, `node_modules`,
+`.claude`, `.DS_Store`), skips files over 2MB and anything that looks
+binary, and caps at 500 results. Toggle "Aa" for case-sensitive matching.
+Results are grouped by file; clicking one opens it and jumps to that line.
 
 ## Source Control
 
@@ -95,6 +104,6 @@ See [`plugins/hello.lua`](plugins/hello.lua) for a minimal example.
 
 Early rewrite. Working: multi-tab editing, undo/redo, selection, clipboard,
 mouse + keyboard navigation, draggable scrollbars, syntax highlighting, file
-explorer, source control panel, console, manual plugin hot-reload. Not yet
-ported from the old prototype: autocomplete, custom fonts/icons, automatic
-(file-watching) plugin reload.
+explorer, project-wide search, source control panel, console, manual plugin
+hot-reload. Not yet ported from the old prototype: autocomplete, custom
+fonts/icons, automatic (file-watching) plugin reload.

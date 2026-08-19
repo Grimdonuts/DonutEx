@@ -1,7 +1,7 @@
 use eframe::egui;
 use std::path::{Path, PathBuf};
 
-const IGNORE: &[&str] = &[".git", "target", "node_modules", ".claude", ".DS_Store"];
+pub(crate) const IGNORE: &[&str] = &[".git", "target", "node_modules", ".claude", ".DS_Store"];
 
 pub struct FileNode {
     pub name: String,

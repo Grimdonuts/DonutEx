@@ -6,6 +6,7 @@ use crate::explorer::{self, FileNode};
 use crate::git::FileEntry;
 use crate::lsp::{LspEvent, LspManager};
 use crate::plugins::{PluginEngine, PluginMessage};
+use crate::search::{self, SearchPanel};
 use crate::settings::{self, AppSettings};
 use crate::source_control::{self, SourceControl};
 use crate::terminal::Terminal;
@@ -27,6 +28,7 @@ enum BottomTab {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SidebarView {
     Explorer,
+    Search,
     SourceControl,
 }
 
@@ -50,6 +52,7 @@ pub struct App {
     project_root: PathBuf,
     file_tree: FileNode,
     source_control: SourceControl,
+    search: SearchPanel,
 
     console_lines: Vec<String>,
 
@@ -133,6 +136,7 @@ impl App {
             project_root,
             file_tree,
             source_control,
+            search: SearchPanel::new(),
             console_lines,
             plugins,
             plugins_dir,
@@ -161,6 +165,9 @@ impl App {
     }
 
     fn open_path(&mut self, path: PathBuf) {
+        // Opening a file should always bring the file view forward, even if
+        // a diff tab currently has focus.
+        self.active_diff_tab = None;
         if let Some(idx) = self
             .documents
             .iter()
@@ -339,6 +346,17 @@ impl App {
             }
             Err(e) => self.console_lines.push(format!("diff failed: {}", e)),
         }
+    }
+
+    /// Opens `path` (or focuses it if already open) and moves the cursor to
+    /// the start of `line` (0-indexed) - used by search result clicks.
+    fn open_at_line(&mut self, path: PathBuf, line: usize) {
+        self.open_path(path);
+        let doc = &mut self.documents[self.active];
+        doc.cursor = doc.lsp_line_col_to_char(line as u32, 0);
+        doc.selection_anchor = None;
+        doc.scroll_offset = (line as f32 - 5.0).max(0.0);
+        self.editor_focused = true;
     }
 
     fn close_diff_tab(&mut self, idx: usize) {
@@ -580,6 +598,10 @@ impl eframe::App for App {
                         self.toggle_sidebar(SidebarView::Explorer);
                         ui.close_menu();
                     }
+                    if ui.button("Search").clicked() {
+                        self.toggle_sidebar(SidebarView::Search);
+                        ui.close_menu();
+                    }
                     if ui.button("Source Control").clicked() {
                         self.toggle_sidebar(SidebarView::SourceControl);
                         ui.close_menu();
@@ -676,6 +698,18 @@ impl eframe::App for App {
                     {
                         self.toggle_sidebar(SidebarView::Explorer);
                     }
+                    let result_count = self.search.result_count();
+                    if activity_button(
+                        ui,
+                        "\u{1F50D}",
+                        self.show_sidebar && self.sidebar_view == SidebarView::Search,
+                        Some(result_count).filter(|c| *c > 0),
+                    )
+                    .on_hover_text("Search")
+                    .clicked()
+                    {
+                        self.toggle_sidebar(SidebarView::Search);
+                    }
                     let change_count = self.source_control.change_count();
                     if activity_button(
                         ui,
@@ -713,6 +747,14 @@ impl eframe::App for App {
                                     self.open_path(path);
                                 }
                             });
+                    }
+                    SidebarView::Search => {
+                        let root = self.project_root.clone();
+                        if let Some(search::SearchAction::OpenResult(path, line)) =
+                            self.search.show(ui, &root)
+                        {
+                            self.open_at_line(path, line);
+                        }
                     }
                     SidebarView::SourceControl => match self.source_control.show(ctx, ui) {
                         Some(source_control::SidebarAction::OpenFile(path)) => {
