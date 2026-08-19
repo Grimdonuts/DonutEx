@@ -525,6 +525,21 @@ impl eframe::App for App {
             self.metrics = Some(EditorMetrics::compute(ctx, 15.0));
         }
 
+        // The editor/terminal read keyboard input directly off `ctx.input()`
+        // rather than through egui's native focus system, gated only by the
+        // `editor_focused`/`terminal_focused` app bools - which nothing ever
+        // clears when a sidebar text field (Search, the commit message box,
+        // a Settings DragValue, ...) gets clicked into. Without this check,
+        // typing into one of those fields would *also* feed every keystroke
+        // to the currently open document (syntax re-highlight + LSP churn
+        // per key - the reported "search lags horribly / backspace doesn't
+        // work") since both the field and the editor were processing the
+        // same raw key events at once. Any such field holds egui's own
+        // native focus while it's being used, so gating on that suppresses
+        // the editor/terminal without needing every new sidebar widget to
+        // remember to flip the app bools itself.
+        let native_focus = ctx.memory(|m| m.focused().is_some());
+
         // global keyboard shortcuts
         let (ctrl_n, ctrl_o, ctrl_shift_o, ctrl_s, ctrl_shift_s, ctrl_w) = ctx.input(|i| {
             let ctrl = i.modifiers.ctrl || i.modifiers.command;
@@ -818,7 +833,7 @@ impl eframe::App for App {
                                     ui,
                                     term,
                                     metrics,
-                                    self.terminal_focused,
+                                    self.terminal_focused && !native_focus,
                                 );
                                 if let Some(msg) = outcome.exited_message {
                                     self.console_lines.push(msg);
@@ -900,7 +915,7 @@ impl eframe::App for App {
                     &mut self.documents[self.active],
                     metrics,
                     &mut self.clipboard,
-                    self.editor_focused,
+                    self.editor_focused && !native_focus,
                     &self.themes[self.current_theme],
                 );
                 if outcome.response.clicked() || outcome.response.dragged() {

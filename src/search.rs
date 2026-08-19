@@ -167,7 +167,7 @@ impl SearchPanel {
                         );
                         last_path = Some(m.path.as_path());
                     }
-                    let label = format!("  {}: {}", m.line + 1, m.line_text.trim());
+                    let label = format!("  {}: {}", m.line + 1, truncate(m.line_text.trim()));
                     if ui.selectable_label(false, label).clicked() {
                         action = Some(SearchAction::OpenResult(m.path.clone(), m.line));
                     }
@@ -175,5 +175,20 @@ impl SearchPanel {
             });
 
         action
+    }
+}
+
+/// Caps a result line's displayed length so one very long source line (a
+/// minified file, a huge string literal) can't force the results list -
+/// and with it the sidebar - wider than the window.
+const MAX_LINE_DISPLAY: usize = 200;
+
+fn truncate(line: &str) -> std::borrow::Cow<'_, str> {
+    if line.chars().count() <= MAX_LINE_DISPLAY {
+        std::borrow::Cow::Borrowed(line)
+    } else {
+        let mut s: String = line.chars().take(MAX_LINE_DISPLAY).collect();
+        s.push('\u{2026}');
+        std::borrow::Cow::Owned(s)
     }
 }
