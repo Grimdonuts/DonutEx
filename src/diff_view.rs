@@ -157,44 +157,101 @@ fn parse_rows(raw: &str) -> Vec<DiffRow> {
     rows
 }
 
+const HANDLE_WIDTH: f32 = 8.0;
+const CODE_FONT_SIZE: f32 = 13.0;
+const MIN_SPLIT: f32 = 0.15;
+const MAX_SPLIT: f32 = 0.85;
+const CELL_PADDING: f32 = 8.0;
+
+/// Renders the diff as two panes (old | new) separated by a draggable
+/// splitter, wrapping text within each pane so it scales down with the
+/// window instead of overflowing. Row heights are measured up front so a
+/// wrapped multi-line cell on one side still keeps both sides - and the
+/// splitter segment between them - aligned on the same row.
 pub fn show(ui: &mut egui::Ui, tab: &DiffTab) {
     if tab.rows.is_empty() {
         ui.label("No differences.");
         return;
     }
-    egui::ScrollArea::both()
+
+    let split_id = egui::Id::new("diff_view_split_fraction");
+    let mut split = ui.memory_mut(|m| *m.data.get_temp_mut_or(split_id, 0.5f32));
+
+    let font_id = egui::FontId::monospace(CODE_FONT_SIZE);
+    let line_h = ui.fonts(|f| f.row_height(&font_id));
+
+    egui::ScrollArea::vertical()
         .id_salt(("diff_scroll", &tab.path, tab.staged))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::Grid::new(("diff_grid", &tab.path, tab.staged))
-                .num_columns(2)
-                .striped(false)
-                .spacing([0.0, 0.0])
-                .min_col_width(ui.available_width() / 2.0 - 4.0)
-                .show(ui, |ui| {
-                    for row in &tab.rows {
-                        match row.kind {
-                            RowKind::HunkHeader => {
-                                ui.colored_label(
-                                    Color32::from_rgb(97, 175, 239),
-                                    row.header.as_deref().unwrap_or("@@"),
-                                );
-                                ui.label("");
-                            }
-                            _ => {
-                                let removed_side = matches!(row.kind, RowKind::Removed | RowKind::Modified);
-                                let added_side = matches!(row.kind, RowKind::Added | RowKind::Modified);
-                                render_side(ui, &row.left, removed_side, true);
-                                render_side(ui, &row.right, added_side, false);
-                            }
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+
+            let divisible = (ui.available_width() - HANDLE_WIDTH).max(80.0);
+            let left_width = (divisible * split).max(40.0);
+            let right_width = (divisible - left_width).max(40.0);
+
+            for row in &tab.rows {
+                let (left_text, right_text) = match row.kind {
+                    RowKind::HunkHeader => (row.header.clone().unwrap_or_default(), String::new()),
+                    _ => (cell_text(&row.left), cell_text(&row.right)),
+                };
+                let lh = measure_height(ui, &left_text, left_width - CELL_PADDING, &font_id).max(line_h);
+                let rh = measure_height(ui, &right_text, right_width - CELL_PADDING, &font_id).max(line_h);
+                let row_height = lh.max(rh);
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                    match row.kind {
+                        RowKind::HunkHeader => {
+                            render_header_cell(ui, &left_text, left_width, row_height, &font_id);
+                            render_splitter(ui, &mut split, divisible, row_height);
+                            ui.allocate_exact_size(egui::vec2(right_width, row_height), egui::Sense::hover());
                         }
-                        ui.end_row();
+                        _ => {
+                            let removed = matches!(row.kind, RowKind::Removed | RowKind::Modified);
+                            let added = matches!(row.kind, RowKind::Added | RowKind::Modified);
+                            render_cell(ui, &row.left, removed, true, left_width, row_height, &font_id);
+                            render_splitter(ui, &mut split, divisible, row_height);
+                            render_cell(ui, &row.right, added, false, right_width, row_height, &font_id);
+                        }
                     }
                 });
+            }
         });
+
+    ui.memory_mut(|m| m.data.insert_temp(split_id, split));
 }
 
-fn render_side(ui: &mut egui::Ui, cell: &Option<(usize, String)>, changed: bool, is_left: bool) {
+fn cell_text(cell: &Option<(usize, String)>) -> String {
+    match cell {
+        Some((no, text)) => format!("{:>5} {}", no, text),
+        None => String::new(),
+    }
+}
+
+/// Measures the wrapped height of `text` at `wrap_width` without drawing it.
+/// egui caches galleys by (text, font, wrap_width), so once a row's width
+/// stabilizes across frames this is a cache hit, not a fresh text layout.
+fn measure_height(ui: &egui::Ui, text: &str, wrap_width: f32, font_id: &egui::FontId) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    ui.fonts(|f| {
+        f.layout(text.to_string(), font_id.clone(), Color32::WHITE, wrap_width.max(1.0))
+            .size()
+            .y
+    })
+}
+
+fn render_cell(
+    ui: &mut egui::Ui,
+    cell: &Option<(usize, String)>,
+    changed: bool,
+    is_left: bool,
+    width: f32,
+    height: f32,
+    font_id: &egui::FontId,
+) {
     let bg = if changed {
         if is_left {
             Color32::from_rgba_unmultiplied(224, 108, 117, 35)
@@ -207,30 +264,69 @@ fn render_side(ui: &mut egui::Ui, cell: &Option<(usize, String)>, changed: bool,
         Color32::TRANSPARENT
     };
 
-    egui::Frame::none()
-        .fill(bg)
-        .inner_margin(egui::Margin::symmetric(4.0, 1.0))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            match cell {
-                Some((no, text)) => {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(format!("{:>5}", no)).monospace().weak(),
-                            )
-                            .selectable(false),
-                        );
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(text).monospace())
-                                .selectable(false)
-                                .wrap_mode(egui::TextWrapMode::Extend),
-                        );
-                    });
+    ui.allocate_ui(egui::vec2(width, height), |ui| {
+        egui::Frame::none()
+            .fill(bg)
+            .inner_margin(egui::Margin::symmetric(4.0, 1.0))
+            .show(ui, |ui| {
+                ui.set_min_size(egui::vec2((width - 8.0).max(0.0), (height - 2.0).max(0.0)));
+                if let Some((no, text)) = cell {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("{:>5} {}", no, text)).font(font_id.clone()),
+                        )
+                        .selectable(false)
+                        .wrap_mode(egui::TextWrapMode::Wrap),
+                    );
                 }
-                None => {
-                    ui.label("");
-                }
-            }
-        });
+            });
+    });
+}
+
+fn render_header_cell(ui: &mut egui::Ui, text: &str, width: f32, height: f32, font_id: &egui::FontId) {
+    ui.allocate_ui(egui::vec2(width, height), |ui| {
+        egui::Frame::none()
+            .inner_margin(egui::Margin::symmetric(4.0, 1.0))
+            .show(ui, |ui| {
+                ui.set_min_size(egui::vec2((width - 8.0).max(0.0), (height - 2.0).max(0.0)));
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(text)
+                            .font(font_id.clone())
+                            .color(Color32::from_rgb(97, 175, 239)),
+                    )
+                    .selectable(false)
+                    .wrap_mode(egui::TextWrapMode::Wrap),
+                );
+            });
+    });
+}
+
+/// A draggable divider between the two panes, redrawn once per row rather
+/// than as a single tall widget - with zero inter-row spacing the segments
+/// butt together and read as one continuous bar, while still being
+/// grabbable from anywhere along its length.
+fn render_splitter(ui: &mut egui::Ui, split: &mut f32, divisible_width: f32, height: f32) {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(HANDLE_WIDTH, height), egui::Sense::drag());
+
+    if response.hovered() || response.dragged() {
+        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+    }
+    if response.dragged() && divisible_width > 1.0 {
+        *split = (*split + response.drag_delta().x / divisible_width).clamp(MIN_SPLIT, MAX_SPLIT);
+    }
+
+    let (color, stroke_width): (Color32, f32) = if response.dragged() {
+        (ui.visuals().selection.bg_fill, 2.0)
+    } else if response.hovered() {
+        (ui.visuals().widgets.hovered.bg_fill, 2.0)
+    } else {
+        (ui.visuals().widgets.noninteractive.bg_stroke.color, 1.0)
+    };
+    let cx = rect.center().x;
+    ui.painter().line_segment(
+        [egui::pos2(cx, rect.top()), egui::pos2(cx, rect.bottom())],
+        egui::Stroke::new(stroke_width, color),
+    );
 }
