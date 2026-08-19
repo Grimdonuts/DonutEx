@@ -15,10 +15,29 @@ renderer) is preserved under [`legacy-cpp/`](legacy-cpp/) for reference.
 
 ## Layout
 
-- **Left**: file explorer for the current project directory
+- **Far left**: activity bar - switches the sidebar between Explorer and
+  Source Control
+- **Left**: file explorer for the current project directory, or the Source
+  Control panel
 - **Top of center**: tab bar for open files
 - **Center**: the text editor
 - **Bottom**: console/output panel (also used for plugin `print()` output)
+
+## Source Control
+
+A VS Code-style git panel, opened from the branch icon in the activity bar
+(it shows a badge with the pending-change count). Shells out to the `git`
+binary, so it needs `git` on `PATH` and the open folder to be a repo.
+
+- Staged Changes / Changes groups, each file tagged with its status letter
+  (M/A/D/R/?) and colored accordingly
+- Click a filename to view its diff in a floating window; the file icon
+  opens it as a normal editor tab
+- Stage / unstage per file or all at once; discard prompts for confirmation
+  since it's destructive
+- Commit box for staged changes
+- Refreshes on demand, after any action, and polled every couple seconds
+  while open
 
 ## Running
 
@@ -73,6 +92,6 @@ See [`plugins/hello.lua`](plugins/hello.lua) for a minimal example.
 
 Early rewrite. Working: multi-tab editing, undo/redo, selection, clipboard,
 mouse + keyboard navigation, draggable scrollbars, syntax highlighting, file
-explorer, console, manual plugin hot-reload. Not yet ported from the old
-prototype: autocomplete, custom fonts/icons, automatic (file-watching)
-plugin reload.
+explorer, source control panel, console, manual plugin hot-reload. Not yet
+ported from the old prototype: autocomplete, custom fonts/icons, automatic
+(file-watching) plugin reload.

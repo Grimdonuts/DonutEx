@@ -5,6 +5,7 @@ use crate::explorer::{self, FileNode};
 use crate::lsp::{LspEvent, LspManager};
 use crate::plugins::{PluginEngine, PluginMessage};
 use crate::settings::{self, AppSettings};
+use crate::source_control::SourceControl;
 use crate::terminal::Terminal;
 use crate::terminal_view;
 use crate::theme;
@@ -19,11 +20,20 @@ enum BottomTab {
     Terminal,
 }
 
+/// Which view the left sidebar is currently showing - mirrors VS Code's
+/// activity bar (Explorer / Source Control / ...).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SidebarView {
+    Explorer,
+    SourceControl,
+}
+
 pub struct App {
     documents: Vec<Document>,
     active: usize,
 
-    show_explorer: bool,
+    show_sidebar: bool,
+    sidebar_view: SidebarView,
     show_bottom_panel: bool,
     show_settings: bool,
     bottom_tab: BottomTab,
@@ -33,6 +43,7 @@ pub struct App {
 
     project_root: PathBuf,
     file_tree: FileNode,
+    source_control: SourceControl,
 
     console_lines: Vec<String>,
 
@@ -100,17 +111,20 @@ impl App {
         }
 
         let lsp = LspManager::new(project_root.clone());
+        let source_control = SourceControl::new(project_root.clone());
 
         Self {
             documents,
             active: 0,
-            show_explorer: true,
+            show_sidebar: true,
+            sidebar_view: SidebarView::Explorer,
             show_bottom_panel: true,
             show_settings: false,
             bottom_tab: BottomTab::Console,
             terminal: None,
             project_root,
             file_tree,
+            source_control,
             console_lines,
             plugins,
             plugins_dir,
@@ -211,12 +225,28 @@ impl App {
     fn set_project_root(&mut self, path: PathBuf) {
         self.project_root = path;
         self.file_tree = explorer::build_tree(&self.project_root);
+        self.source_control = SourceControl::new(self.project_root.clone());
         self.console_lines
             .push(format!("project root: {}", self.project_root.display()));
         // Dropping the old manager kills any running server processes (see
         // `LspTransport`'s `Drop` impl) instead of leaving them attached to
         // the previous, now-wrong, root.
         self.lsp = LspManager::new(self.project_root.clone());
+    }
+
+    /// Shows/hides the sidebar and switches its active view - clicking the
+    /// already-active activity bar icon collapses the sidebar, same as VS
+    /// Code, rather than doing nothing.
+    fn toggle_sidebar(&mut self, view: SidebarView) {
+        if self.show_sidebar && self.sidebar_view == view {
+            self.show_sidebar = false;
+            return;
+        }
+        self.sidebar_view = view;
+        self.show_sidebar = true;
+        if view == SidebarView::SourceControl {
+            self.source_control.refresh();
+        }
     }
 
     fn open_folder_dialog(&mut self) {
@@ -236,7 +266,10 @@ impl App {
         }
         let doc = &mut self.documents[self.active];
         match doc.save() {
-            Ok(()) => self.console_lines.push(format!("saved {}", doc.display_name)),
+            Ok(()) => {
+                self.console_lines.push(format!("saved {}", doc.display_name));
+                self.source_control.refresh();
+            }
             Err(e) => self.console_lines.push(format!("save failed: {}", e)),
         }
     }
@@ -250,9 +283,11 @@ impl App {
         {
             let doc = &mut self.documents[self.active];
             match doc.save_as(path) {
-                Ok(()) => self
-                    .console_lines
-                    .push(format!("saved {}", doc.display_name)),
+                Ok(()) => {
+                    self.console_lines
+                        .push(format!("saved {}", doc.display_name));
+                    self.source_control.refresh();
+                }
                 Err(e) => self.console_lines.push(format!("save failed: {}", e)),
             }
         }
@@ -498,7 +533,14 @@ impl eframe::App for App {
                     }
                 });
                 ui.menu_button("View", |ui| {
-                    ui.checkbox(&mut self.show_explorer, "File Explorer");
+                    if ui.button("Explorer").clicked() {
+                        self.toggle_sidebar(SidebarView::Explorer);
+                        ui.close_menu();
+                    }
+                    if ui.button("Source Control").clicked() {
+                        self.toggle_sidebar(SidebarView::SourceControl);
+                        ui.close_menu();
+                    }
                     ui.checkbox(&mut self.show_bottom_panel, "Console / Terminal");
                     if ui.button("Refresh Explorer").clicked() {
                         self.refresh_explorer();
@@ -574,27 +616,66 @@ impl eframe::App for App {
             self.switch_theme(ctx, i);
         }
 
-        if self.show_explorer {
-            egui::SidePanel::left("explorer")
+        egui::SidePanel::left("activity_bar")
+            .resizable(false)
+            .exact_width(38.0)
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(4.0);
+                    if activity_button(
+                        ui,
+                        "\u{1F4C1}",
+                        self.show_sidebar && self.sidebar_view == SidebarView::Explorer,
+                        None,
+                    )
+                    .on_hover_text("Explorer")
+                    .clicked()
+                    {
+                        self.toggle_sidebar(SidebarView::Explorer);
+                    }
+                    let change_count = self.source_control.change_count();
+                    if activity_button(
+                        ui,
+                        "\u{2387}",
+                        self.show_sidebar && self.sidebar_view == SidebarView::SourceControl,
+                        Some(change_count).filter(|c| *c > 0),
+                    )
+                    .on_hover_text("Source Control")
+                    .clicked()
+                    {
+                        self.toggle_sidebar(SidebarView::SourceControl);
+                    }
+                });
+            });
+
+        if self.show_sidebar {
+            egui::SidePanel::left("sidebar")
                 .resizable(true)
                 .default_width(230.0)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.heading(
-                            self.project_root
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "project".to_string()),
-                        );
-                    });
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            if let Some(path) = explorer::show(ui, &self.file_tree) {
-                                self.open_path(path);
-                            }
+                .show(ctx, |ui| match self.sidebar_view {
+                    SidebarView::Explorer => {
+                        ui.horizontal(|ui| {
+                            ui.heading(
+                                self.project_root
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| "project".to_string()),
+                            );
                         });
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if let Some(path) = explorer::show(ui, &self.file_tree) {
+                                    self.open_path(path);
+                                }
+                            });
+                    }
+                    SidebarView::SourceControl => {
+                        if let Some(path) = self.source_control.show(ctx, ui) {
+                            self.open_path(path);
+                        }
+                    }
                 });
         }
 
@@ -723,9 +804,27 @@ impl eframe::App for App {
         self.sync_active_doc_with_lsp();
         self.drain_lsp_events();
         self.autosave_tick();
+        self.source_control.maybe_poll();
 
         // Editor content changes constantly while typing; keep redrawing so
         // the caret/scroll stay responsive without waiting on OS events.
         ctx.request_repaint();
     }
+}
+
+/// One icon in the activity bar (the narrow strip of view-switcher icons
+/// down the left edge, VS Code-style). `badge`, when set, prints a small
+/// count under the icon - used for the Source Control icon's pending-change
+/// count.
+fn activity_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    active: bool,
+    badge: Option<usize>,
+) -> egui::Response {
+    let text = match badge {
+        Some(n) => egui::RichText::new(format!("{}\n{}", icon, n)).size(13.0),
+        None => egui::RichText::new(icon).size(18.0),
+    };
+    ui.add_sized([32.0, 32.0], egui::SelectableLabel::new(active, text))
 }
