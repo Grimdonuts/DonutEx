@@ -1,8 +1,11 @@
-//! The Search sidebar: a VS Code-style "search all files" panel. Walks the
-//! project directory on demand (Enter / the Search button, not on every
-//! keystroke) and lists matching lines grouped by file.
+//! The Search sidebar: a VS Code-style "search all files" panel. Runs on
+//! demand (Enter / the Search button, not on every keystroke) and lists
+//! matching lines grouped by file. In a git repo, the candidate file list
+//! comes from `git ls-files` (respecting `.gitignore` automatically);
+//! otherwise it falls back to walking the directory tree directly.
 
 use crate::explorer;
+use crate::git;
 use eframe::egui::{self, Color32};
 use std::path::{Path, PathBuf};
 
@@ -61,6 +64,20 @@ impl SearchPanel {
             self.query.to_lowercase()
         };
 
+        if git::is_repo(root) {
+            if let Ok(files) = git::list_files(root) {
+                for path in files {
+                    if self.search_file(&path, &needle) {
+                        return; // hit MAX_RESULTS
+                    }
+                }
+                return;
+            }
+            // `git` is present (is_repo succeeded) but ls-files failed for
+            // some other reason - fall through to the manual walk rather
+            // than silently returning zero results.
+        }
+
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -75,35 +92,46 @@ impl SearchPanel {
                     stack.push(path);
                     continue;
                 }
-                if meta.len() > MAX_FILE_SIZE {
-                    continue;
-                }
-                let Ok(bytes) = std::fs::read(&path) else { continue };
-                if bytes.iter().take(4096).any(|&b| b == 0) {
-                    continue; // looks binary
-                }
-                let Ok(text) = String::from_utf8(bytes) else { continue };
-
-                for (i, line) in text.lines().enumerate() {
-                    let haystack = if self.case_sensitive {
-                        line.to_string()
-                    } else {
-                        line.to_lowercase()
-                    };
-                    if haystack.contains(&needle) {
-                        self.results.push(SearchMatch {
-                            path: path.clone(),
-                            line: i,
-                            line_text: line.to_string(),
-                        });
-                        if self.results.len() >= MAX_RESULTS {
-                            self.truncated = true;
-                            return;
-                        }
-                    }
+                if self.search_file(&path, &needle) {
+                    return;
                 }
             }
         }
+    }
+
+    /// Searches one file for `needle`, appending any matching lines to
+    /// `self.results`. Returns `true` once `MAX_RESULTS` is hit, telling
+    /// the caller to stop walking.
+    fn search_file(&mut self, path: &Path, needle: &str) -> bool {
+        let Ok(meta) = std::fs::metadata(path) else { return false };
+        if !meta.is_file() || meta.len() > MAX_FILE_SIZE {
+            return false;
+        }
+        let Ok(bytes) = std::fs::read(path) else { return false };
+        if bytes.iter().take(4096).any(|&b| b == 0) {
+            return false; // looks binary
+        }
+        let Ok(text) = String::from_utf8(bytes) else { return false };
+
+        for (i, line) in text.lines().enumerate() {
+            let haystack = if self.case_sensitive {
+                line.to_string()
+            } else {
+                line.to_lowercase()
+            };
+            if haystack.contains(needle) {
+                self.results.push(SearchMatch {
+                    path: path.to_path_buf(),
+                    line: i,
+                    line_text: line.to_string(),
+                });
+                if self.results.len() >= MAX_RESULTS {
+                    self.truncated = true;
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, root: &Path) -> Option<SearchAction> {

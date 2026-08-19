@@ -26,11 +26,16 @@ renderer) is preserved under [`legacy-cpp/`](legacy-cpp/) for reference.
 
 A project-wide text search, opened from the magnifying-glass icon in the
 activity bar (badge shows the result count). Runs on Enter / the Search
-button rather than per keystroke - it walks the project directory itself
-(same ignore list as the file explorer: `.git`, `target`, `node_modules`,
-`.claude`, `.DS_Store`), skips files over 2MB and anything that looks
-binary, and caps at 500 results. Toggle "Aa" for case-sensitive matching.
-Results are grouped by file; clicking one opens it and jumps to that line.
+button rather than per keystroke. In a git repo, the file list comes from
+`git ls-files` (tracked files plus untracked-but-not-ignored ones), so it
+automatically respects `.gitignore` - `node_modules`, build output, etc.
+all get skipped without a maintained list, and per-project excludes (e.g.
+this repo's own `/examplets`, which holds real secrets) are honored too.
+Falls back to a plain directory walk (same ignore list as the file
+explorer) outside a git repo. Either way, files over 2MB or that look
+binary are skipped, and results cap at 500. Toggle "Aa" for
+case-sensitive matching. Results are grouped by file; clicking one opens
+it and jumps to that line.
 
 ## Source Control
 

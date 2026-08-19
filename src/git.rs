@@ -206,3 +206,16 @@ pub fn commit(root: &Path, message: &str) -> Result<String, String> {
         c.arg("commit").arg("-m").arg(message);
     })
 }
+
+/// Every file git considers "not ignored": tracked files (`--cached`) plus
+/// untracked files that survive `.gitignore`/`.git/info/exclude`/the global
+/// excludes file (`--others --exclude-standard`). Used by the search panel
+/// so it automatically skips whatever a project already excludes -
+/// `node_modules`, build output, etc. - without maintaining a guessed list
+/// of directory names ourselves.
+pub fn list_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let out = git(root, |c| {
+        c.args(["ls-files", "--cached", "--others", "--exclude-standard"]);
+    })?;
+    Ok(out.lines().map(|l| root.join(l)).collect())
+}
