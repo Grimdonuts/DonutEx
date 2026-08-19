@@ -1,9 +1,40 @@
 use crate::theme::{self, Theme};
 use mlua::{Lua, MultiValue};
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
+
+/// Locates the `plugins/` directory to load from. Historically this was
+/// always `<project_root>/plugins`, i.e. relative to the current working
+/// directory - which works for `cargo run` from the repo, but breaks the
+/// moment the binary is invoked from anywhere else (e.g. a PATH alias in
+/// `.bashrc`): the app would silently find zero plugins, losing even the
+/// built-in themes, which ship as `plugins/theme_*.lua`.
+///
+/// Instead, walk up from the *running executable's own location* looking
+/// for a `plugins/` directory - this finds the same directory whether
+/// launched via `cargo run` (binary under `target/debug/`, a few levels
+/// below the repo root) or via a PATH-installed copy, regardless of the
+/// caller's current directory. Only falls back to the old
+/// project-root-relative path if that walk turns up nothing, so a project
+/// that ships its own local `plugins/` folder still works.
+pub fn resolve_dir(project_root: &Path) -> PathBuf {
+    find_near_exe().unwrap_or_else(|| project_root.join("plugins"))
+}
+
+fn find_near_exe() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent()?.to_path_buf();
+    for _ in 0..6 {
+        let candidate = dir.join("plugins");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+    None
+}
 
 /// Messages plugins can send back into the editor. Kept as a plain channel so
 /// the Lua VM never needs a reference back into app state (which would fight
@@ -202,6 +233,22 @@ fn theme_from_lua_table(t: &mlua::Table) -> mlua::Result<Theme> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_dir_finds_plugins_regardless_of_project_root() {
+        // Simulates the reported bug: the app launched (e.g. via a PATH
+        // alias) with an unrelated directory as `project_root`. The old
+        // `project_root.join("plugins")` behavior would return a path that
+        // doesn't exist; resolve_dir should still find the real plugins
+        // directory via the executable's own location.
+        let bogus_root = Path::new("/tmp/definitely-not-the-donutex-checkout");
+        let dir = resolve_dir(bogus_root);
+        assert!(
+            dir.join("theme_dark_plus.lua").is_file(),
+            "resolved plugins dir did not contain the built-in theme plugin: {}",
+            dir.display()
+        );
+    }
 
     #[test]
     fn loads_theme_plugins_from_disk() {

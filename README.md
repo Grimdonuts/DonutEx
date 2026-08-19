@@ -78,11 +78,15 @@ file, rather than rescanned every frame.
 
 ## Plugins
 
-Plugins live in `plugins/*.lua` and are loaded on startup. Each plugin is
-plain interpreted Lua — no build step — so **Plugins > Reload Plugins** in
-the menu bar hot-reloads every plugin file by tearing down the Lua VM and
-re-running them from disk. Edit a `.lua` file, click reload, see the change
-without restarting the editor.
+Plugins live in `plugins/*.lua` and are loaded on startup. The directory is
+found relative to the running executable (walking up a few levels from
+wherever the binary actually lives), not the current working directory -
+so plugins still load correctly whether you're running via `cargo run`
+from the repo or via a `donutex` alias/PATH entry invoked from anywhere
+else. Each plugin is plain interpreted Lua — no build step — so
+**Plugins > Reload Plugins** in the menu bar hot-reloads every plugin file
+by tearing down the Lua VM and re-running them from disk. Edit a `.lua`
+file, click reload, see the change without restarting the editor.
 
 Available from Lua:
 

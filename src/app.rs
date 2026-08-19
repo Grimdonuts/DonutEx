@@ -5,7 +5,7 @@ use crate::editor_view::{self, EditorMetrics};
 use crate::explorer::{self, FileNode};
 use crate::git::FileEntry;
 use crate::lsp::{LspEvent, LspManager};
-use crate::plugins::{PluginEngine, PluginMessage};
+use crate::plugins::{self, PluginEngine, PluginMessage};
 use crate::search::{self, SearchPanel};
 use crate::settings::{self, AppSettings};
 use crate::source_control::{self, SourceControl};
@@ -93,7 +93,7 @@ fn merge_themes(base: Vec<theme::Theme>, plugin_themes: Vec<theme::Theme>) -> Ve
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let plugins_dir = project_root.join("plugins");
+        let plugins_dir = plugins::resolve_dir(&project_root);
         let file_tree = explorer::build_tree(&project_root);
 
         let mut plugins = PluginEngine::new();
