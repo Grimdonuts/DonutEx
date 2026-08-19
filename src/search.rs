@@ -114,22 +114,33 @@ impl SearchPanel {
 
         let mut submit = false;
         ui.horizontal(|ui| {
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .hint_text("Search project files")
-                    .desired_width(ui.available_width() - 36.0),
-            );
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                submit = true;
-            }
-            if ui
-                .selectable_label(self.case_sensitive, "Aa")
-                .on_hover_text("Match Case")
-                .clicked()
-            {
-                self.case_sensitive = !self.case_sensitive;
-                submit = true;
-            }
+            // Right-to-left so the "Aa" toggle is placed (and its real
+            // width measured) first; the text field then fills whatever
+            // space is *actually* left, rather than guessing a fixed
+            // pixel amount to reserve. A guessed reservation that's even
+            // slightly too small lets the row overflow its allocated
+            // width - and since SidePanel persists its width from the
+            // content's measured bounding rect each frame, that overflow
+            // compounds every single frame, growing the sidebar
+            // indefinitely with no user input at all.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .selectable_label(self.case_sensitive, "Aa")
+                    .on_hover_text("Match Case")
+                    .clicked()
+                {
+                    self.case_sensitive = !self.case_sensitive;
+                    submit = true;
+                }
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.query)
+                        .hint_text("Search project files")
+                        .desired_width(ui.available_width()),
+                );
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    submit = true;
+                }
+            });
         });
         if ui.button("\u{1F50D} Search").clicked() {
             submit = true;
