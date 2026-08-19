@@ -1,11 +1,13 @@
 use crate::console;
+use crate::diff_view::{self, DiffTab};
 use crate::document::Document;
 use crate::editor_view::{self, EditorMetrics};
 use crate::explorer::{self, FileNode};
+use crate::git::FileEntry;
 use crate::lsp::{LspEvent, LspManager};
 use crate::plugins::{PluginEngine, PluginMessage};
 use crate::settings::{self, AppSettings};
-use crate::source_control::SourceControl;
+use crate::source_control::{self, SourceControl};
 use crate::terminal::Terminal;
 use crate::terminal_view;
 use crate::theme;
@@ -31,6 +33,10 @@ enum SidebarView {
 pub struct App {
     documents: Vec<Document>,
     active: usize,
+    diff_tabs: Vec<DiffTab>,
+    /// `Some(idx)` when a diff tab (rather than one of `documents`) is the
+    /// focused tab in the center panel.
+    active_diff_tab: Option<usize>,
 
     show_sidebar: bool,
     sidebar_view: SidebarView,
@@ -116,6 +122,8 @@ impl App {
         Self {
             documents,
             active: 0,
+            diff_tabs: Vec::new(),
+            active_diff_tab: None,
             show_sidebar: true,
             sidebar_view: SidebarView::Explorer,
             show_bottom_panel: true,
@@ -311,6 +319,41 @@ impl App {
         } else if idx < self.active {
             self.active -= 1;
         }
+    }
+
+    /// Opens (or focuses, if already open) a side-by-side diff tab for
+    /// `entry` in the main editor area, next to the regular document tabs.
+    fn open_diff(&mut self, entry: &FileEntry, staged: bool) {
+        if let Some(idx) = self
+            .diff_tabs
+            .iter()
+            .position(|t| t.path == entry.path && t.staged == staged)
+        {
+            self.active_diff_tab = Some(idx);
+            return;
+        }
+        match diff_view::build(&self.project_root, entry, staged) {
+            Ok(tab) => {
+                self.diff_tabs.push(tab);
+                self.active_diff_tab = Some(self.diff_tabs.len() - 1);
+            }
+            Err(e) => self.console_lines.push(format!("diff failed: {}", e)),
+        }
+    }
+
+    fn close_diff_tab(&mut self, idx: usize) {
+        self.diff_tabs.remove(idx);
+        self.active_diff_tab = match self.active_diff_tab {
+            Some(active) if active == idx => {
+                if self.diff_tabs.is_empty() {
+                    None
+                } else {
+                    Some(idx.min(self.diff_tabs.len() - 1))
+                }
+            }
+            Some(active) if active > idx => Some(active - 1),
+            other => other,
+        };
     }
 
     fn reload_plugins(&mut self, ctx: &egui::Context) {
@@ -671,11 +714,15 @@ impl eframe::App for App {
                                 }
                             });
                     }
-                    SidebarView::SourceControl => {
-                        if let Some(path) = self.source_control.show(ctx, ui) {
+                    SidebarView::SourceControl => match self.source_control.show(ctx, ui) {
+                        Some(source_control::SidebarAction::OpenFile(path)) => {
                             self.open_path(path);
                         }
-                    }
+                        Some(source_control::SidebarAction::OpenDiff(entry, staged)) => {
+                            self.open_diff(&entry, staged);
+                        }
+                        None => {}
+                    },
                 });
         }
 
@@ -747,14 +794,15 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // tab bar
+            // tab bar - document tabs and diff tabs share one strip, like VS
+            // Code's editor tab bar.
             egui::TopBottomPanel::top("tabs")
                 .show_separator_line(true)
                 .show_inside(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        let mut close_request = None;
+                        let mut close_doc = None;
                         for (i, doc) in self.documents.iter().enumerate() {
-                            let selected = i == self.active;
+                            let selected = self.active_diff_tab.is_none() && i == self.active;
                             let label = if doc.dirty {
                                 format!("\u{25CF} {}", doc.display_name)
                             } else {
@@ -763,38 +811,67 @@ impl eframe::App for App {
                             ui.horizontal(|ui| {
                                 if ui.selectable_label(selected, label).clicked() {
                                     self.active = i;
+                                    self.active_diff_tab = None;
                                     self.editor_focused = true;
                                     self.terminal_focused = false;
                                 }
                                 if ui.small_button("x").clicked() {
-                                    close_request = Some(i);
+                                    close_doc = Some(i);
                                 }
                             });
                         }
-                        if let Some(idx) = close_request {
+                        if let Some(idx) = close_doc {
                             self.close_tab(idx);
+                        }
+
+                        let mut close_diff = None;
+                        for (i, tab) in self.diff_tabs.iter().enumerate() {
+                            let selected = self.active_diff_tab == Some(i);
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(selected, format!("\u{21C6} {}", tab.title))
+                                    .clicked()
+                                {
+                                    self.active_diff_tab = Some(i);
+                                    self.editor_focused = true;
+                                    self.terminal_focused = false;
+                                }
+                                if ui.small_button("x").clicked() {
+                                    close_diff = Some(i);
+                                }
+                            });
+                        }
+                        if let Some(idx) = close_diff {
+                            self.close_diff_tab(idx);
                         }
                     });
                 });
 
-            let metrics = self.metrics.as_ref().unwrap();
-            let outcome = editor_view::show(
-                ui,
-                &mut self.documents[self.active],
-                metrics,
-                &mut self.clipboard,
-                self.editor_focused,
-                &self.themes[self.current_theme],
-            );
-            if outcome.response.clicked() || outcome.response.dragged() {
-                self.editor_focused = true;
-                self.terminal_focused = false;
-            }
-            if let Some(offset) = outcome.goto_definition {
-                let doc = &self.documents[self.active];
-                if let Some(path) = doc.path.clone() {
-                    let (line, character) = doc.char_to_lsp_line_col(offset);
-                    self.lsp.request_definition(&path, doc.language, line, character);
+            if let Some(idx) = self.active_diff_tab {
+                if let Some(tab) = self.diff_tabs.get(idx) {
+                    diff_view::show(ui, tab);
+                }
+            } else {
+                let metrics = self.metrics.as_ref().unwrap();
+                let outcome = editor_view::show(
+                    ui,
+                    &mut self.documents[self.active],
+                    metrics,
+                    &mut self.clipboard,
+                    self.editor_focused,
+                    &self.themes[self.current_theme],
+                );
+                if outcome.response.clicked() || outcome.response.dragged() {
+                    self.editor_focused = true;
+                    self.terminal_focused = false;
+                }
+                if let Some(offset) = outcome.goto_definition {
+                    let doc = &self.documents[self.active];
+                    if let Some(path) = doc.path.clone() {
+                        let (line, character) = doc.char_to_lsp_line_col(offset);
+                        self.lsp
+                            .request_definition(&path, doc.language, line, character);
+                    }
                 }
             }
         });

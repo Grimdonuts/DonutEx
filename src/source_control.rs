@@ -1,6 +1,7 @@
 //! The Source Control sidebar: a VS Code-style git panel with staged /
-//! unstaged file groups, stage/unstage/discard actions, a commit box, and a
-//! diff viewer.
+//! unstaged file groups, stage/unstage/discard actions, and a commit box.
+//! Diff viewing itself lives in `diff_view` and is opened as a regular
+//! editor tab by the caller in response to `SidebarAction::OpenDiff`.
 
 use crate::git::{self, FileEntry};
 use eframe::egui::{self, Color32};
@@ -9,22 +10,12 @@ use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-enum DiffLineKind {
-    Add,
-    Remove,
-    Hunk,
-    Meta,
-    Context,
-}
-
-struct DiffLine {
-    kind: DiffLineKind,
-    text: String,
-}
-
-struct DiffView {
-    title: String,
-    lines: Vec<DiffLine>,
+/// What the user asked the sidebar to do, for the caller (`App`) to act on -
+/// opening a file or a diff both need state (the document list, the diff
+/// tab list) that lives outside this struct.
+pub enum SidebarAction {
+    OpenFile(PathBuf),
+    OpenDiff(FileEntry, bool),
 }
 
 pub struct SourceControl {
@@ -35,7 +26,6 @@ pub struct SourceControl {
     unstaged: Vec<FileEntry>,
     commit_message: String,
     error: Option<String>,
-    diff_view: Option<DiffView>,
     pending_discard: Option<FileEntry>,
     last_refresh: Instant,
 }
@@ -51,7 +41,6 @@ impl SourceControl {
             unstaged: Vec::new(),
             commit_message: String::new(),
             error: None,
-            diff_view: None,
             pending_discard: None,
             last_refresh: Instant::now(),
         };
@@ -87,23 +76,6 @@ impl SourceControl {
     pub fn maybe_poll(&mut self) {
         if self.is_repo && self.last_refresh.elapsed() >= POLL_INTERVAL {
             self.refresh();
-        }
-    }
-
-    fn view_diff(&mut self, entry: &FileEntry, staged: bool) {
-        let result = if entry.status == '?' {
-            git::diff_untracked(&self.root, &entry.path)
-        } else {
-            git::diff(&self.root, &entry.path, staged)
-        };
-        match result {
-            Ok(text) => {
-                self.diff_view = Some(DiffView {
-                    title: format!("Diff: {}", entry.path.display()),
-                    lines: parse_diff(&text),
-                });
-            }
-            Err(e) => self.error = Some(e),
         }
     }
 
@@ -150,11 +122,11 @@ impl SourceControl {
         self.refresh();
     }
 
-    /// Draws the sidebar contents into `ui` and any floating diff/confirm
-    /// windows via `ctx`. Returns a path the caller should open as a normal
-    /// editor tab, if the user clicked a file's "open" button.
-    pub fn show(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) -> Option<PathBuf> {
-        let mut open_file = None;
+    /// Draws the sidebar contents into `ui` and the discard-confirm window
+    /// via `ctx`. Returns an action for the caller to carry out, if the
+    /// user clicked a file's name (view diff) or open-file button.
+    pub fn show(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) -> Option<SidebarAction> {
+        let mut result = None;
 
         ui.heading("Source Control");
         ui.separator();
@@ -209,7 +181,7 @@ impl SourceControl {
                             action = Some(a);
                         }
                     }
-                    self.apply_action(action, &mut open_file);
+                    self.apply_action(action, &mut result);
                     ui.add_space(8.0);
                 }
 
@@ -226,7 +198,7 @@ impl SourceControl {
                             action = Some(a);
                         }
                     }
-                    self.apply_action(action, &mut open_file);
+                    self.apply_action(action, &mut result);
                 }
 
                 if self.staged.is_empty() && self.unstaged.is_empty() {
@@ -234,53 +206,21 @@ impl SourceControl {
                 }
             });
 
-        self.show_diff_window(ctx);
         self.show_discard_confirm(ctx);
 
-        open_file
+        result
     }
 
-    fn apply_action(&mut self, action: Option<Action>, open_file: &mut Option<PathBuf>) {
+    fn apply_action(&mut self, action: Option<Action>, result: &mut Option<SidebarAction>) {
         match action {
-            Some(Action::Open(path)) => *open_file = Some(path),
-            Some(Action::ViewDiff(entry, staged)) => self.view_diff(&entry, staged),
+            Some(Action::Open(path)) => *result = Some(SidebarAction::OpenFile(path)),
+            Some(Action::ViewDiff(entry, staged)) => {
+                *result = Some(SidebarAction::OpenDiff(entry, staged))
+            }
             Some(Action::Stage(path)) => self.do_stage(&path),
             Some(Action::Unstage(path)) => self.do_unstage(&path),
             Some(Action::Discard(entry)) => self.pending_discard = Some(entry),
             None => {}
-        }
-    }
-
-    fn show_diff_window(&mut self, ctx: &egui::Context) {
-        let Some(diff) = &self.diff_view else { return };
-        let mut open = true;
-        egui::Window::new(&diff.title)
-            .id(egui::Id::new("source_control_diff_window"))
-            .default_size([700.0, 500.0])
-            .resizable(true)
-            .collapsible(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                egui::ScrollArea::both()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for line in &diff.lines {
-                            let color = match line.kind {
-                                DiffLineKind::Add => Color32::from_rgb(129, 193, 105),
-                                DiffLineKind::Remove => Color32::from_rgb(224, 108, 117),
-                                DiffLineKind::Hunk => Color32::from_rgb(97, 175, 239),
-                                DiffLineKind::Meta => Color32::GRAY,
-                                DiffLineKind::Context => ui.visuals().text_color(),
-                            };
-                            ui.label(egui::RichText::new(&line.text).monospace().color(color));
-                        }
-                        if diff.lines.is_empty() {
-                            ui.label("No differences.");
-                        }
-                    });
-            });
-        if !open {
-            self.diff_view = None;
         }
     }
 
@@ -337,8 +277,9 @@ fn status_color(status: char) -> Color32 {
     }
 }
 
-/// Renders one file row (`status_letter  name    [open] [diff-implicit] [+/-] [discard]`)
-/// and returns the action the user requested, if any.
+/// Renders one file row (`status_letter  name    [open] [+/-] [discard]`)
+/// and returns the action the user requested, if any. Clicking the name
+/// requests the side-by-side diff; the file icon opens it as a normal tab.
 fn show_entry(ui: &mut egui::Ui, entry: &FileEntry, staged: bool) -> Option<Action> {
     let mut action = None;
     ui.horizontal(|ui| {
@@ -398,34 +339,4 @@ fn show_entry(ui: &mut egui::Ui, entry: &FileEntry, staged: bool) -> Option<Acti
         });
     });
     action
-}
-
-fn parse_diff(raw: &str) -> Vec<DiffLine> {
-    raw.lines()
-        .map(|line| {
-            let kind = if line.starts_with("+++")
-                || line.starts_with("---")
-                || line.starts_with("diff --git")
-                || line.starts_with("index ")
-                || line.starts_with("new file")
-                || line.starts_with("deleted file")
-                || line.starts_with("similarity index")
-                || line.starts_with("rename ")
-            {
-                DiffLineKind::Meta
-            } else if line.starts_with("@@") {
-                DiffLineKind::Hunk
-            } else if line.starts_with('+') {
-                DiffLineKind::Add
-            } else if line.starts_with('-') {
-                DiffLineKind::Remove
-            } else {
-                DiffLineKind::Context
-            };
-            DiffLine {
-                kind,
-                text: line.to_string(),
-            }
-        })
-        .collect()
 }

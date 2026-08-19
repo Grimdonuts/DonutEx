@@ -1,5 +1,6 @@
 mod app;
 mod console;
+mod diff_view;
 mod document;
 mod editor_view;
 mod explorer;

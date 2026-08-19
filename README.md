@@ -31,8 +31,10 @@ binary, so it needs `git` on `PATH` and the open folder to be a repo.
 
 - Staged Changes / Changes groups, each file tagged with its status letter
   (M/A/D/R/?) and colored accordingly
-- Click a filename to view its diff in a floating window; the file icon
-  opens it as a normal editor tab
+- Click a filename to open a side-by-side diff (old on the left, new on the
+  right, added/removed lines highlighted) as a regular tab in the main
+  editor area, next to your open files; the file icon instead opens it as a
+  normal editor tab
 - Stage / unstage per file or all at once; discard prompts for confirmation
   since it's destructive
 - Commit box for staged changes
